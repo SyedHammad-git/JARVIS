@@ -51,27 +51,28 @@ def _is_command_not_question(c: str) -> bool:
 # the actual execution is always this one fixed, reviewed code path either
 # way — natural-language understanding and safe execution aren't in tension.
 _SYSTEM_ACTIONS = {
-    "shutdown":  ("shutdown /s /t 5",
+    "shutdown":  (["shutdown", "/s", "/t", "5"],
                   "Shutting down in 5 seconds, Sir."),
-    "restart":   ("shutdown /r /t 5",
+    "restart":   (["shutdown", "/r", "/t", "5"],
                   "Restarting in 5 seconds, Sir."),
-    "sleep":     ("rundll32.exe powrprof.dll,SetSuspendState 0,1,0",
+    "sleep":     (["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"],
                   "PC going to sleep, Sir."),
-    "lock":      ("rundll32.exe user32.dll,LockWorkStation",
+    "lock":      (["rundll32.exe", "user32.dll,LockWorkStation"],
                   "Workstation locked, Sir."),
-    "hibernate": ("shutdown /h",
+    "hibernate": (["shutdown", "/h"],
                   "Hibernating, Sir."),
 }
 
 def perform_system_action(action: str) -> str:
     """Execute one of the 5 whitelisted system actions (exact key match
     only — callers are responsible for mapping natural language / keywords
-    to one of these first, this function does no interpretation itself)."""
+    to one of these first, this function does no interpretation itself).
+    argv list only — never shell=True."""
     entry = _SYSTEM_ACTIONS.get(action)
     if not entry:
         return f"Unknown system action: {action}"
     cmd, reply = entry
-    subprocess.run(cmd, shell=True, check=False)
+    subprocess.run(cmd, shell=False, check=False)
     log.info("System action executed: %s", action)
     return reply
 

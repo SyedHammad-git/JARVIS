@@ -123,6 +123,11 @@ if _LIMITER_OK:
 
 @app.errorhandler(Exception)
 def unhandled_exception(e):
+    # Pass werkzeug HTTPException through unchanged so 401/403/429 keep
+    # their proper status codes instead of being wrapped as 500.
+    from werkzeug.exceptions import HTTPException as _HTTPExc
+    if isinstance(e, _HTTPExc):
+        return e
     log.exception("Unhandled exception: %s", e)
     return jsonify({"error": "An unexpected error occurred", "code": 500}), 500
 
@@ -137,7 +142,7 @@ from notifications import PLYER_OK
 from config import (
     GROQ_KEY, GEMINI_KEY, OPENROUTER_KEY, WEATHER_KEY,
     CV2_OK, DDGS_OK, CLIP_OK,
-    heartbeat_cfg
+    heartbeat_cfg, EXECUTION_MODE, DEVICE_ID,
 )
 from database import DB_PATH
 
@@ -157,6 +162,7 @@ print(f"║   OpenCV      : {'✅ camera ready' if CV2_OK else '⚠  pip install
 print(f"║   DDG Search  : {'✅ web search ready' if DDGS_OK else '⚠  pip install duckduckgo-search'}")
 print(f"║   Clipboard   : {'✅ active' if CLIP_OK else '⚠  pip install pyperclip'}")
 print(f"║   Tools       : {len(AGENT_TOOLS)} agent tools")
+print(f"║   Exec mode   : {EXECUTION_MODE} ({DEVICE_ID})")
 print(f"║   Heartbeat   : {'✅ enabled' if heartbeat_cfg['enabled'] else '⏸  disabled'}")
 print("╠══════════════════════════════════════════════════════════╣")
 print("║   http://localhost:5000           Desktop UI             ║")
@@ -168,9 +174,30 @@ print()
 
 # ── 10. Run ───────────────────────────────────────────────────────
 if __name__ == "__main__":
-    host  = os.environ.get("JARVIS_HOST", "0.0.0.0")
+    host  = os.environ.get("JARVIS_HOST", "127.0.0.1")   # changed: 0.0.0.0 → 127.0.0.1
     port  = int(os.environ.get("JARVIS_PORT", 5000))
     debug = os.environ.get("JARVIS_DEBUG", "false").lower() == "true"
+
     if debug:
         log.warning("DEBUG mode is ON — disable in production (JARVIS_DEBUG=false)")
-    app.run(host=host, port=port, debug=debug, threaded=True, use_reloader=False)
+        app.run(host=host, port=port, debug=True, threaded=True, use_reloader=False)
+    else:
+        # ✅ Waitress: production WSGI server — no dev-server warnings, no thread leaks
+        try:
+            from waitress import serve as _waitress_serve
+            log.info("Starting Waitress on %s:%d (threads=8)", host, port)
+            print(f"[JARVIS] ✅ Waitress serving on http://{host}:{port}")
+            _waitress_serve(
+                app,
+                host=host,
+                port=port,
+                threads=8,
+                trusted_proxy="127.0.0.1",
+                trusted_proxy_headers="x-forwarded-for x-forwarded-proto",
+                clear_untrusted_proxy_headers=True,
+            )
+        except ImportError:
+            log.error("waitress not installed — run: pip install waitress")
+            log.warning("Falling back to Flask dev server (not for production!)")
+            app.run(host=host, port=port, debug=False, threaded=True, use_reloader=False)
+

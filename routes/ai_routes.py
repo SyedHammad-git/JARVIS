@@ -26,7 +26,9 @@ def agent_chat():
     if not user_input:
         return jsonify({"error": "No message provided"}), 400
     session_id = data.get("session_id", "default")
-    result     = run_agent(user_input, session_id=session_id)
+    confirmed  = bool(data.get("confirmed"))
+    result     = run_agent(user_input, session_id=session_id,
+                           ctx={"confirmed": confirmed})
     return jsonify({
         "ok":         result.get("ok"),
         "reply":      result.get("reply",""),

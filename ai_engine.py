@@ -2,7 +2,7 @@
 J.A.R.V.I.S v17.M — Multi-AI Engine
 FIXED: M3 _manager_cache eviction, M4 ai_router_state thread safety, M1 Gemini URL
 """
-import datetime, logging, threading, time
+import datetime, json, logging, threading, time, uuid
 
 from config import (
     GROQ_KEY, GEMINI_KEY, OPENROUTER_KEY,
@@ -52,9 +52,10 @@ AGENT_SYS_BASE = """You are JARVIS — Just A Rather Very Intelligent System, bu
 You are a British AI with precise, calm, slightly witty intelligence. Always address the user as "Sir". Never casual.
 Fully autonomous AI with Windows PC access, internet, and all connected systems.
 
-TOOLS: web_search, open_app, file_find, file_read, get_processes, kill_process,
-       get_system_status, take_screenshot, control_volume, type_text, run_shell_safe,
+TOOLS: web_search, open_app, open_url, file_find, file_read, get_processes, kill_process,
+       get_system_status, take_screenshot, describe_screen, control_volume, type_text,
        get_weather, get_clipboard, set_clipboard, create_folder, system_action, search_memory
+There is NO free-form shell tool. Use open_app (allowlisted names) or open_url (http/https).
 
 LANGUAGE & PHRASING: The user mixes Urdu, Roman Urdu, and English in the same sentence,
 and phrases requests casually rather than in exact keywords — e.g. "notepad khol do",
@@ -177,17 +178,21 @@ def call_gemini(prompt: str, image_base64: str = None) -> dict:
         with ai_router_lock: ai_router_state["gemini_ok"] = False
         return {"ok": False, "error": str(e)}
 
-def call_openrouter(messages: list, max_tokens=1024) -> dict:
+def call_openrouter(messages: list, tools=None, max_tokens=1024) -> dict:
     if not REQUESTS_OK or not OPENROUTER_KEY:
         return {"ok": False, "error": "OpenRouter not configured"}
     try:
+        payload = {"model": OPENROUTER_MODEL, "messages": messages,
+                   "max_tokens": max_tokens, "temperature": 0.1}
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
         resp = _post_with_retry(OPENROUTER_URL,
                          headers={"Authorization": f"Bearer {OPENROUTER_KEY}",
                                   "Content-Type": "application/json",
                                   "HTTP-Referer": "https://jarvis.local",
                                   "X-Title": "JARVIS"},
-                         json={"model": OPENROUTER_MODEL, "messages": messages,
-                               "max_tokens": max_tokens, "temperature": 0.1},
+                         json=payload,
                          timeout=35)
         if resp.status_code == 200:
             with ai_router_lock: ai_router_state["openrouter_ok"] = True
@@ -197,6 +202,234 @@ def call_openrouter(messages: list, max_tokens=1024) -> dict:
     except Exception as e:
         with ai_router_lock: ai_router_state["openrouter_ok"] = False
         return {"ok": False, "error": str(e)}
+
+# ── Provider adapter: one normalized function-calling shape ───────
+def _parse_openai_args(raw) -> dict:
+    if isinstance(raw, dict):
+        return raw
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+def normalize_openai_chat_completion(data: dict) -> dict:
+    """Groq / OpenRouter chat.completion -> {text, tool_calls, raw_assistant_message}."""
+    choice = (data.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    text = message.get("content") or ""
+    tool_calls = []
+    for tc in message.get("tool_calls") or []:
+        fn = tc.get("function") or {}
+        tool_calls.append({
+            "id": tc.get("id") or f"call_{uuid.uuid4().hex[:24]}",
+            "name": fn.get("name") or "",
+            "args": _parse_openai_args(fn.get("arguments")),
+        })
+    return {
+        "ok": True,
+        "text": text,
+        "tool_calls": tool_calls,
+        "raw_assistant_message": message,
+        "error": "",
+    }
+
+
+def normalize_gemini_generate_content(data: dict) -> dict:
+    """Gemini generateContent -> the same normalized dict (OpenAI-shaped raw message)."""
+    cand = (data.get("candidates") or [{}])[0]
+    parts = (cand.get("content") or {}).get("parts") or []
+    texts, tool_calls, openai_tcs = [], [], []
+    for part in parts:
+        if part.get("text"):
+            texts.append(part["text"])
+        fc = part.get("functionCall") or part.get("function_call")
+        if not fc:
+            continue
+        tid = f"call_{uuid.uuid4().hex[:24]}"
+        name = fc.get("name") or ""
+        args = fc.get("args") if isinstance(fc.get("args"), dict) else _parse_openai_args(
+            fc.get("args") or fc.get("arguments")
+        )
+        tool_calls.append({"id": tid, "name": name, "args": args})
+        openai_tcs.append({
+            "id": tid,
+            "type": "function",
+            "function": {"name": name, "arguments": json.dumps(args)},
+        })
+    text = "\n".join(texts)
+    raw = {"role": "assistant", "content": text or None}
+    if openai_tcs:
+        raw["tool_calls"] = openai_tcs
+    return {
+        "ok": True,
+        "text": text,
+        "tool_calls": tool_calls,
+        "raw_assistant_message": raw,
+        "error": "",
+    }
+
+
+def _tool_name_from_history(tool_call_id: str, messages: list) -> str:
+    if not tool_call_id:
+        return "tool"
+    for m in messages:
+        for tc in (m.get("tool_calls") or []):
+            if tc.get("id") == tool_call_id:
+                return (tc.get("function") or {}).get("name") or "tool"
+    return "tool"
+
+
+def openai_history_to_gemini(messages: list, tools=None):
+    """Convert OpenAI-format history so failover mid-conversation can hit Gemini."""
+    system_parts, contents, pending_fn = [], [], []
+
+    def flush_fn():
+        nonlocal pending_fn
+        if pending_fn:
+            contents.append({"role": "user", "parts": pending_fn})
+            pending_fn = []
+
+    for m in messages:
+        role = m.get("role")
+        if role == "system":
+            system_parts.append(m.get("content") or "")
+            continue
+        if role == "tool":
+            fname = m.get("name") or _tool_name_from_history(m.get("tool_call_id"), messages)
+            pending_fn.append({
+                "functionResponse": {
+                    "name": fname,
+                    "response": {"result": str(m.get("content") or "")[:4000]},
+                }
+            })
+            continue
+        flush_fn()
+        if role == "user":
+            contents.append({"role": "user", "parts": [{"text": m.get("content") or ""}]})
+        elif role == "assistant":
+            parts = []
+            if m.get("content"):
+                parts.append({"text": m["content"]})
+            for tc in m.get("tool_calls") or []:
+                fn = tc.get("function") or {}
+                parts.append({
+                    "functionCall": {
+                        "name": fn.get("name") or "",
+                        "args": _parse_openai_args(fn.get("arguments")),
+                    }
+                })
+            if parts:
+                contents.append({"role": "model", "parts": parts})
+    flush_fn()
+
+    g_tools = None
+    if tools:
+        decls = []
+        for t in tools:
+            fn = t.get("function") or t
+            decls.append({
+                "name": fn.get("name"),
+                "description": fn.get("description") or "",
+                "parameters": fn.get("parameters") or {"type": "object", "properties": {}},
+            })
+        g_tools = [{"functionDeclarations": decls}]
+    sys_inst = "\n".join(p for p in system_parts if p) or None
+    return contents, g_tools, sys_inst
+
+
+def call_gemini_chat(contents, tools=None, system=None, max_tokens=1024) -> dict:
+    if not REQUESTS_OK or not GEMINI_KEY:
+        return {"ok": False, "error": "Gemini not configured", "text": "",
+                "tool_calls": [], "raw_assistant_message": None}
+    try:
+        url = get_gemini_url(pro=False)
+        payload = {
+            "contents": contents,
+            "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.1},
+        }
+        if system:
+            payload["systemInstruction"] = {"parts": [{"text": system}]}
+        if tools:
+            payload["tools"] = tools
+        resp = _post_with_retry(url, json=payload,
+                                headers={"Content-Type": "application/json"}, timeout=35)
+        if resp.status_code == 200:
+            with ai_router_lock:
+                ai_router_state["gemini_ok"] = True
+            norm = normalize_gemini_generate_content(resp.json())
+            norm["model"] = "gemini-2.0-flash"
+            return norm
+        with ai_router_lock:
+            ai_router_state["gemini_ok"] = False
+        return {"ok": False, "error": f"Gemini HTTP {resp.status_code}",
+                "text": "", "tool_calls": [], "raw_assistant_message": None}
+    except Exception as e:
+        with ai_router_lock:
+            ai_router_state["gemini_ok"] = False
+        return {"ok": False, "error": str(e), "text": "",
+                "tool_calls": [], "raw_assistant_message": None}
+
+
+def _empty_chat(error: str, text: str = "") -> dict:
+    return {
+        "ok": False, "text": text, "tool_calls": [],
+        "raw_assistant_message": None, "model": "none", "error": error,
+    }
+
+
+def chat(messages: list, tools=None, max_tokens=1024, temperature=0.1) -> dict:
+    """
+    Single adapter: Groq -> OpenRouter -> Gemini.
+    Always returns {ok, text, tool_calls:[{id,name,args}], raw_assistant_message, model}.
+    History is kept in OpenAI shape; converted only when Gemini is used.
+    """
+    with ai_router_lock:
+        ai_router_state["call_count"] += 1
+
+    if groq_available():
+        result = call_groq(messages, tools=tools, max_tokens=max_tokens, temperature=temperature)
+        if result.get("ok"):
+            with ai_router_lock:
+                ai_router_state["active"] = "groq"
+            norm = normalize_openai_chat_completion(result["data"])
+            norm["model"] = "groq/llama-3.3-70b"
+            return norm
+        with ai_router_lock:
+            ai_router_state["fail_count"] += 1
+        log.warning("chat(): Groq failed (%s) — OpenRouter", result.get("error"))
+
+    if OPENROUTER_KEY:
+        result = call_openrouter(messages, tools=tools, max_tokens=max_tokens)
+        if result.get("ok"):
+            with ai_router_lock:
+                ai_router_state["active"] = "openrouter"
+                ai_router_state["last_switch"] = ts()
+                ai_router_state["switch_reason"] = "Groq unavailable"
+            norm = normalize_openai_chat_completion(result["data"])
+            norm["model"] = "openrouter/claude-haiku"
+            return norm
+        log.warning("chat(): OpenRouter failed (%s) — Gemini", result.get("error"))
+
+    if GEMINI_KEY:
+        contents, g_tools, sys_inst = openai_history_to_gemini(messages, tools)
+        result = call_gemini_chat(contents, tools=g_tools, system=sys_inst, max_tokens=max_tokens)
+        if result.get("ok"):
+            with ai_router_lock:
+                ai_router_state["active"] = "gemini"
+                ai_router_state["last_switch"] = ts()
+                ai_router_state["switch_reason"] = "Groq/OpenRouter unavailable"
+            return result
+        log.warning("chat(): Gemini failed (%s)", result.get("error"))
+
+    return _empty_chat(
+        "all_providers_unavailable",
+        "All AI engines unavailable, Sir. Please check API keys in .env.",
+    )
+
 
 # ── ✅ FIX M3: Bounded manager cache with TTL eviction ────────────
 _manager_cache: dict = {}
