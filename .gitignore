@@ -22,5 +22,9 @@ Thumbs.db
 
 # ── Logs & local data ──────────────────────────────────────────────
 *.log
-jarvis.db
+*.db
+*.db.bak-*
 JARVIS_Data/
+
+# ── Node (Electron client — Step 3+) ──────────────────────────────
+node_modules/
