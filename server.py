@@ -1,0 +1,176 @@
+"""
+╔══════════════════════════════════════════════════════════════════╗
+║   J.A.R.V.I.S  v17.M  —  Application Entry Point               ║
+║   FIXED: H3 random secret, M7 global error handlers, L7 health  ║
+╚══════════════════════════════════════════════════════════════════╝
+"""
+import logging
+import os
+from pathlib import Path
+
+# ── 1. Load .env ──────────────────────────────────────────────────
+try:
+    from dotenv import load_dotenv
+    _env = Path(__file__).parent / ".env"
+    if _env.exists():
+        load_dotenv(str(_env))
+        print("[JARVIS] ✅ .env loaded")
+    else:
+        print("[JARVIS] ⚠  .env not found — using OS environment variables")
+except ImportError:
+    print("[JARVIS] ⚠  python-dotenv not installed (pip install python-dotenv)")
+
+# ── 2. Logging setup ──────────────────────────────────────────────
+# TASK-031: every module already logs to its own named logger
+# (jarvis.db, jarvis.auth, jarvis.ai, jarvis.agent, jarvis.command,
+# jarvis.tools, jarvis.neural, jarvis.errors, ...) but there was no file
+# behind any of it — only whatever the console happened to show at the
+# time. A RotatingFileHandler on the root logger means a "random" failure
+# can be traced after the fact from ~/JARVIS_Data/jarvis.log instead of
+# needing to reproduce it live with the console open.
+# (Path is computed here rather than imported from database.py, so this
+# runs before database.py — and its own startup logging — is imported.)
+from logging.handlers import RotatingFileHandler
+
+_log_dir = Path(os.path.expanduser("~")) / "JARVIS_Data"
+_log_dir.mkdir(parents=True, exist_ok=True)
+_file_handler = RotatingFileHandler(
+    _log_dir / "jarvis.log", maxBytes=5_000_000, backupCount=5, encoding="utf-8"
+)
+_file_handler.setFormatter(logging.Formatter(
+    fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+))
+
+logging.basicConfig(
+    level=getattr(logging, os.environ.get("LOG_LEVEL","INFO").upper(), logging.INFO),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[logging.StreamHandler(), _file_handler],
+)
+log = logging.getLogger("jarvis")
+
+# ── 3. Flask app ──────────────────────────────────────────────────
+from flask import Flask, jsonify
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+    _LIMITER_OK = True
+except ImportError:
+    _LIMITER_OK = False
+    print("[SERVER] ⚠ flask-limiter not installed — pip install flask-limiter")
+
+
+app = Flask(__name__, static_folder=None)
+
+# Import config AFTER dotenv so env vars are available
+import config
+app.config["SECRET_KEY"]         = config.FLASK_SECRET   # ✅ FIX H3: from DB/env, never hardcoded
+app.config["JSON_SORT_KEYS"]     = False
+app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024
+
+# ── 4. CORS ───────────────────────────────────────────────────────
+CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*")
+try:
+    from flask_cors import CORS
+    CORS(app, origins=CORS_ORIGINS, supports_credentials=False)
+    log.info("CORS enabled (origins: %s)", CORS_ORIGINS)
+except ImportError:
+    log.warning("flask-cors not installed — CORS headers missing (pip install flask-cors)")
+
+# ── 5. Import all modules ─────────────────────────────────────────
+import database, notifications, auth
+import ai_engine, tools, agent, command
+import memory, smarthome, monitor, neural
+
+# ── 6. Register blueprints ────────────────────────────────────────
+from routes.core_routes   import core
+from routes.ai_routes     import ai
+from routes.system_routes import system
+from routes.data_routes   import data
+from routes.iot_routes    import iot
+
+for bp in (core, ai, system, data, iot):
+    app.register_blueprint(bp)
+
+log.info("All blueprints registered — %d routes total",
+         len(list(app.url_map.iter_rules())))
+
+# ── 7. Global error handlers ─────────────────────────────────────
+# ✅ FIX M7: catch unhandled 404 and 500 — never leak stack traces
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({"error": "Endpoint not found", "code": 404}), 404
+
+@app.errorhandler(405)
+def method_not_allowed(e):
+    return jsonify({"error": "Method not allowed", "code": 405}), 405
+
+@app.errorhandler(500)
+def internal_error(e):
+    log.error("Unhandled 500: %s", e)
+    return jsonify({"error": "Internal server error", "code": 500}), 500
+
+# ── Rate limiter ─────────────────────────────────────────────────
+if _LIMITER_OK:
+    limiter = Limiter(
+        get_remote_address,
+        app=app,
+        default_limits=["200 per minute"],
+        storage_uri="memory://",
+    )
+    print("[SERVER] ✅ Rate limiter active (200 req/min default)")
+
+@app.errorhandler(Exception)
+def unhandled_exception(e):
+    log.exception("Unhandled exception: %s", e)
+    return jsonify({"error": "An unexpected error occurred", "code": 500}), 500
+
+# ── 8. Start background threads ───────────────────────────────────
+monitor.start_background_threads()
+neural.start_background_threads()
+log.info("All background threads started")
+
+# ── 9. Startup banner ─────────────────────────────────────────────
+from tools import AGENT_TOOLS
+from notifications import PLYER_OK
+from config import (
+    GROQ_KEY, GEMINI_KEY, OPENROUTER_KEY, WEATHER_KEY,
+    CV2_OK, DDGS_OK, CLIP_OK,
+    heartbeat_cfg
+)
+from database import DB_PATH
+
+print()
+print("╔══════════════════════════════════════════════════════════╗")
+print("║   J.A.R.V.I.S  v17.M  —  Enterprise Edition             ║")
+print("║   Just A Rather Very Intelligent System                  ║")
+print("║   Built by Hammad  •  github.com/SyedHammad-git         ║")
+print("╠══════════════════════════════════════════════════════════╣")
+print(f"║   Database    : {str(DB_PATH)[:46]}")
+print(f"║   Groq        : {'✅ active' if GROQ_KEY else '❌ missing GROQ_KEY'}")
+print(f"║   Gemini      : {'✅ active' if GEMINI_KEY else '❌ missing GEMINI_KEY'}")
+print(f"║   OpenRouter  : {'✅ active' if OPENROUTER_KEY else '❌ missing OPENROUTER_KEY'}")
+print(f"║   Weather     : {'✅ OWM active' if WEATHER_KEY else '⚠  wttr.in fallback'}")
+print(f"║   plyer       : {'✅ OS notifications' if PLYER_OK else '⚠  pip install plyer'}")
+print(f"║   OpenCV      : {'✅ camera ready' if CV2_OK else '⚠  pip install opencv-python'}")
+print(f"║   DDG Search  : {'✅ web search ready' if DDGS_OK else '⚠  pip install duckduckgo-search'}")
+print(f"║   Clipboard   : {'✅ active' if CLIP_OK else '⚠  pip install pyperclip'}")
+print(f"║   Tools       : {len(AGENT_TOOLS)} agent tools")
+print(f"║   Heartbeat   : {'✅ enabled' if heartbeat_cfg['enabled'] else '⏸  disabled'}")
+print("╠══════════════════════════════════════════════════════════╣")
+print("║   http://localhost:5000           Desktop UI             ║")
+print("║   http://localhost:5000/mobile    Mobile UI              ║")
+print("║   http://localhost:5000/api/ping  Health check           ║")
+print("║   http://localhost:5000/api/health  Deep health check    ║")
+print("╚══════════════════════════════════════════════════════════╝")
+print()
+
+# ── 10. Run ───────────────────────────────────────────────────────
+if __name__ == "__main__":
+    host  = os.environ.get("JARVIS_HOST", "0.0.0.0")
+    port  = int(os.environ.get("JARVIS_PORT", 5000))
+    debug = os.environ.get("JARVIS_DEBUG", "false").lower() == "true"
+    if debug:
+        log.warning("DEBUG mode is ON — disable in production (JARVIS_DEBUG=false)")
+    app.run(host=host, port=port, debug=debug, threaded=True, use_reloader=False)

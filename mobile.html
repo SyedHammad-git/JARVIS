@@ -1,0 +1,1387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>J.A.R.V.I.S Mobile</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+:root {
+    /* PRD v10.0 Design System */
+    --bg:#060D1F; --bg-mid:#0A1628; --bg-light:#0F2040;
+    --c:#00C8E8; --g:#00C472; --r:#FF4444; --y:#F59E0B; --o:#ff6600;
+    --panel:rgba(10,22,40,0.92);
+    --bdr:rgba(0,200,232,0.10); --bdr2:rgba(0,200,232,0.35); --bdr3:rgba(0,200,232,0.60);
+    --c-soft:rgba(0,200,232,.07); --g-soft:rgba(0,196,114,.08);
+    --fh:'Orbitron',sans-serif; --fm:'Share Tech Mono',monospace;
+    --tx:#D8EEFF; --txd:rgba(180,210,235,0.55);
+    --radius:12px; --transition:0.25s cubic-bezier(0.2,0.8,0.2,1);
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+body{background:var(--bg);color:var(--tx);font-family:var(--fm);overflow:hidden;height:100vh;display:flex;flex-direction:column;max-width:100vw;}
+
+/* ── TOAST ── */
+#TOAST{position:fixed;top:20px;left:50%;transform:translateX(-50%) translateY(-60px);background:var(--g);color:#000;padding:12px 25px;border-radius:30px;font-family:var(--fh);font-size:11px;font-weight:bold;letter-spacing:2px;opacity:0;transition:all .4s cubic-bezier(.2,.8,.2,1);z-index:99999;box-shadow:0 5px 15px rgba(0,255,136,.4);pointer-events:none;}
+#TOAST.show{transform:translateX(-50%) translateY(0);opacity:1;}
+#TOAST.error{background:var(--r);box-shadow:0 5px 15px rgba(255,0,60,.4);color:#fff;}
+#TOAST.warn{background:var(--y);color:#000;}
+
+/* ── LOGIN SCREEN ── */
+#LOGIN_SCREEN{position:fixed;inset:0;background:var(--bg);z-index:10000;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity .5s;}
+.login-logo{font-family:var(--fh);font-size:40px;font-weight:900;color:var(--c);letter-spacing:8px;text-shadow:0 0 30px var(--c),0 0 60px rgba(0,200,232,.4),0 0 100px rgba(0,200,232,.15);margin-bottom:4px;}
+.login-sub{font-size:9px;color:var(--txd);letter-spacing:4px;margin-bottom:10px;}
+.login-version{font-size:8px;color:rgba(0,240,255,.3);letter-spacing:2px;margin-bottom:28px;}
+
+/* Biometric button */
+.bio-btn{width:72px;height:72px;border-radius:50%;border:2px solid var(--bdr2);background:rgba(0,240,255,.06);color:var(--c);font-size:30px;display:flex;align-items:center;justify-content:center;margin-bottom:20px;transition:all .3s;cursor:pointer;}
+.bio-btn:active{background:rgba(0,240,255,.2);transform:scale(.95);box-shadow:0 0 25px rgba(0,240,255,.4);}
+.bio-label{font-size:9px;color:var(--txd);letter-spacing:2px;margin-bottom:22px;}
+
+/* OR divider */
+.or-divider{display:flex;align-items:center;gap:12px;width:75%;max-width:280px;margin-bottom:18px;}
+.or-line{flex:1;height:1px;background:rgba(0,240,255,.15);}
+.or-text{font-size:9px;color:rgba(0,240,255,.3);letter-spacing:2px;}
+
+.pin-dots{display:flex;gap:18px;margin-bottom:28px;}
+.pin-dot{width:18px;height:18px;border-radius:50%;border:2px solid var(--c);transition:.3s cubic-bezier(0.2,0.8,0.2,1);}
+.pin-dot.filled{background:var(--c);box-shadow:0 0 14px var(--c),0 0 28px rgba(0,200,232,.3);transform:scale(1.1);}
+.numpad{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;width:82%;max-width:300px;}
+.num-btn{background:rgba(0,200,232,.04);border:1px solid var(--bdr);color:var(--c);font-family:var(--fh);font-size:24px;height:80px;border-radius:16px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:.2s;}
+.num-btn:active{background:var(--c);color:#000;box-shadow:0 0 20px var(--c);transform:scale(.95);}
+.num-btn.del-btn{font-size:18px;color:var(--txd);}
+.login-err{font-size:10px;color:var(--r);letter-spacing:2px;margin-top:12px;min-height:18px;text-align:center;}
+
+/* ── APP ── */
+#APP{display:none;flex-direction:column;height:100%;opacity:0;transition:opacity .5s;padding-bottom:72px;}
+.header{height:60px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;border-bottom:1px solid var(--bdr);background:rgba(0,0,0,.6);backdrop-filter:blur(15px);flex-shrink:0;}
+.logo{font-family:var(--fh);font-size:17px;color:var(--c);font-weight:900;letter-spacing:3px;text-shadow:0 0 10px var(--c);}
+.status-pill{display:flex;align-items:center;gap:7px;font-size:9px;letter-spacing:1px;border:1px solid var(--bdr);padding:5px 10px;border-radius:20px;background:rgba(0,240,255,.04);}
+.status-dot{width:7px;height:7px;border-radius:50%;background:var(--y);box-shadow:0 0 8px var(--y);animation:blink 1s infinite alternate;}
+.status-dot.online{background:var(--g);box-shadow:0 0 8px var(--g);animation:none;}
+.status-dot.offline{background:var(--r);box-shadow:0 0 8px var(--r);animation:none;}
+@keyframes blink{to{opacity:.3;}}
+@keyframes blink2{to{opacity:.5;}}
+@keyframes mobilePulse{0%,100%{opacity:1;}50%{opacity:.4;}}
+
+.content{flex:1;overflow-y:auto;padding:18px;scrollbar-width:none;-webkit-overflow-scrolling:touch;}
+.tab-section{display:none;animation:slideUp .3s ease-out;}
+.tab-section.active{display:block;}
+@keyframes slideUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+
+.sec-title{font-family:var(--fh);color:var(--c);font-size:10px;letter-spacing:3px;margin-bottom:14px;margin-top:8px;text-shadow:0 0 5px rgba(0,240,255,.4);}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:13px;}
+/* .action-btn replaced by PRD v10.0 injected CSS */
+
+.action-btn.danger{border-color:rgba(255,0,60,.25);}
+.action-btn.danger:active{background:rgba(255,0,60,.18);border-color:var(--r);color:var(--r);}
+.action-btn.warn-btn{border-color:rgba(255,204,0,.25);}
+.action-btn.warn-btn:active{background:rgba(255,204,0,.12);border-color:var(--y);color:var(--y);}
+.btn-icon{font-size:24px;margin-bottom:6px;}
+
+/* Agent chat */
+.agent-box{background:var(--panel);border:1px solid var(--bdr);border-radius:18px;padding:18px;margin-bottom:14px;}
+/* .agent-reply replaced by PRD v10.0 injected CSS */
+.agent-input-row{display:flex;gap:8px;margin-bottom:12px;}
+/* .agent-text-input replaced by PRD v10.0 injected CSS */
+/* .agent-send-btn replaced by PRD v10.0 injected CSS */
+
+.agent-controls{display:flex;gap:8px;}
+/* .agent-mic-btn replaced by PRD v10.0 injected CSS */
+
+.agent-clear-btn{width:50px;height:50px;border-radius:12px;background:rgba(255,0,60,.05);border:1px solid rgba(255,0,60,.15);color:rgba(255,60,60,.6);font-size:18px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:.2s;}
+.agent-clear-btn:active{background:rgba(255,0,60,.15);color:var(--r);}
+.steps-mini{font-size:9px;color:rgba(0,240,255,.35);letter-spacing:1px;margin-top:6px;min-height:12px;}
+@keyframes micPulse{from{transform:scale(.97)}to{transform:scale(1.03)}}
+
+/* Stats */
+/* .stat-box replaced by PRD v10.0 injected CSS */
+/* .stat-lbl replaced by PRD v10.0 injected CSS */
+/* .bar-bg replaced by PRD v10.0 injected CSS */
+/* .bar-fill replaced by PRD v10.0 injected CSS */
+.bar-fill.ram{background:linear-gradient(90deg,#0055ff,var(--g));box-shadow:0 0 8px var(--g);}
+.bar-fill.bat{background:linear-gradient(90deg,#ff6600,var(--y));box-shadow:0 0 8px var(--y);}
+
+/* Media */
+.media-box{background:var(--panel);border:1px solid var(--bdr);border-radius:18px;padding:22px 18px;text-align:center;margin-bottom:14px;}
+.media-ctrls{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px;padding:0 8px;}
+.m-btn{width:52px;height:52px;border-radius:50%;background:rgba(0,240,255,.05);border:1px solid var(--c);color:var(--c);font-size:18px;display:flex;align-items:center;justify-content:center;transition:.2s;cursor:pointer;}
+.m-btn:active{background:var(--c);color:#000;transform:scale(.9);box-shadow:0 0 20px var(--c);}
+.m-btn.play{width:70px;height:70px;font-size:28px;background:rgba(0,240,255,.12);box-shadow:0 0 12px rgba(0,240,255,.15);}
+input[type=range]{-webkit-appearance:none;width:100%;background:transparent;height:30px;outline:none;}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;height:22px;width:22px;border-radius:50%;background:var(--c);box-shadow:0 0 12px var(--c);margin-top:-9px;cursor:pointer;}
+input[type=range]::-webkit-slider-runnable-track{width:100%;height:4px;background:rgba(0,240,255,.18);border-radius:2px;}
+
+/* Security */
+.shield-banner{display:flex;align-items:center;gap:14px;background:rgba(0,255,136,.04);border:1px solid rgba(0,255,136,.18);border-radius:16px;padding:15px;margin-bottom:13px;transition:all .3s;}
+.shield-banner.alert{background:rgba(255,0,60,.05);border-color:rgba(255,0,60,.28);}
+.shield-big{font-size:34px;transition:all .4s;}
+.shield-state-m{font-family:var(--fh);font-size:10px;color:var(--g);letter-spacing:2px;transition:color .3s;}
+.shield-state-m.alert{color:var(--r);}
+.shield-sub-m{font-size:10px;color:var(--txd);margin-top:3px;line-height:1.4;}
+.sec-stats-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:13px;}
+.sec-stat-card{background:var(--panel);border:1px solid var(--bdr);border-radius:12px;padding:12px;text-align:center;}
+.sec-stat-val{font-family:var(--fh);font-size:20px;color:var(--c);}
+.sec-stat-val.red{color:var(--r);}
+.sec-stat-val.green{color:var(--g);}
+.sec-stat-lbl{font-size:9px;color:var(--txd);letter-spacing:1px;margin-top:2px;}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid rgba(0,240,255,.06);}
+.toggle-lbl{font-size:12px;color:var(--tx);}
+.m-toggle{width:44px;height:22px;background:rgba(0,240,255,.07);border:1px solid var(--bdr);border-radius:11px;position:relative;transition:all .3s;flex-shrink:0;cursor:pointer;}
+.m-toggle.on{background:rgba(0,255,136,.16);border-color:rgba(0,255,136,.38);}
+.m-toggle::after{content:'';position:absolute;width:15px;height:15px;border-radius:50%;background:var(--txd);top:2.5px;left:3px;transition:all .3s;}
+.m-toggle.on::after{left:24px;background:var(--g);box-shadow:0 0 7px var(--g);}
+.cmd-log-m{background:rgba(0,0,0,.3);border:1px solid var(--bdr);border-radius:10px;padding:10px;max-height:120px;overflow-y:auto;font-size:10px;line-height:1.7;color:var(--txd);margin-top:10px;}
+.log-ok{color:var(--g);}
+.log-err{color:var(--r);}
+.log-warn{color:var(--y);}
+
+/* Cameras */
+.cam-hero{background:rgba(0,240,255,.03);border:1px solid var(--bdr);border-radius:16px;padding:13px;margin-bottom:13px;}
+.cam-hero-title{font-family:var(--fh);font-size:10px;color:var(--c);letter-spacing:3px;margin-bottom:9px;display:flex;align-items:center;justify-content:space-between;}
+.m-cam-card{background:var(--panel);border:1px solid var(--bdr);border-radius:14px;overflow:hidden;margin-bottom:11px;transition:border-color .3s;}
+.m-cam-card.active{border-color:rgba(0,255,136,.38);box-shadow:0 0 10px rgba(0,255,136,.07);}
+.m-cam-feed{width:100%;aspect-ratio:16/9;background:#000308;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+.m-cam-feed img{width:100%;height:100%;object-fit:cover;display:none;}
+.m-cam-feed img.vis{display:block;}
+.m-cam-offline{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;background:repeating-linear-gradient(45deg,rgba(0,240,255,.01) 0,rgba(0,240,255,.01) 1px,transparent 1px,transparent 8px);}
+.m-cam-offline-ico{font-size:26px;opacity:.28;}
+.m-cam-offline-txt{font-size:9px;color:rgba(0,240,255,.18);letter-spacing:2px;}
+.m-cam-info{padding:9px 13px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid rgba(0,240,255,.06);}
+.m-cam-name{font-family:var(--fh);font-size:10px;color:var(--tx);letter-spacing:1px;}
+.m-cam-type{font-size:9px;color:var(--txd);margin-top:2px;}
+.m-cam-dot{width:7px;height:7px;border-radius:50%;background:var(--r);transition:all .3s;}
+.m-cam-dot.on{background:var(--g);box-shadow:0 0 5px var(--g);animation:blink2 1s infinite alternate;}
+.m-cam-btns{display:flex;gap:7px;padding:0 13px 9px;}
+.m-cam-btn{flex:1;height:36px;border-radius:8px;background:rgba(0,240,255,.05);border:1px solid var(--bdr);color:var(--txd);font-family:var(--fh);font-size:8px;letter-spacing:1px;display:flex;align-items:center;justify-content:center;gap:3px;transition:.2s;cursor:pointer;}
+.m-cam-btn:active{background:rgba(0,240,255,.14);color:var(--c);}
+.m-cam-btn.on-btn{background:rgba(0,255,136,.09);border-color:rgba(0,255,136,.28);color:var(--g);}
+.m-cam-btn.del-btn{border-color:rgba(255,0,60,.18);color:rgba(255,80,80,.55);}
+.add-cam-box{background:rgba(0,240,255,.03);border:1px dashed rgba(0,240,255,.18);border-radius:14px;padding:15px;}
+.add-cam-title{font-family:var(--fh);font-size:10px;color:var(--c);letter-spacing:2px;margin-bottom:11px;}
+.m-input{width:100%;background:rgba(0,240,255,.05);border:1px solid var(--bdr);color:var(--tx);font-family:var(--fm);font-size:12px;padding:10px 12px;border-radius:8px;outline:none;margin-bottom:8px;-webkit-appearance:none;}
+.m-select{width:100%;background:rgba(0,5,15,.9);border:1px solid var(--bdr);color:var(--tx);font-family:var(--fm);font-size:12px;padding:10px 12px;border-radius:8px;outline:none;margin-bottom:8px;-webkit-appearance:none;}
+.m-add-btn{width:100%;height:46px;background:rgba(0,240,255,.09);border:1px solid var(--bdr);color:var(--c);font-family:var(--fh);font-size:10px;letter-spacing:2px;border-radius:10px;display:flex;align-items:center;justify-content:center;transition:.2s;cursor:pointer;}
+.m-add-btn:active{background:rgba(0,240,255,.22);}
+
+/* Smart Home */
+.sh-m-card{background:var(--panel);border:1px solid var(--bdr);border-radius:14px;padding:13px;margin-bottom:9px;display:flex;align-items:center;justify-content:space-between;transition:all .3s;}
+.sh-m-card.on{border-color:rgba(0,255,136,.28);background:rgba(0,255,136,.03);}
+.sh-m-left{display:flex;align-items:center;gap:11px;}
+.sh-m-ico{font-size:24px;}
+.sh-m-name{font-family:var(--fh);font-size:11px;color:var(--tx);letter-spacing:1px;}
+.sh-m-type{font-size:9px;color:var(--txd);margin-top:2px;}
+.sh-m-toggle{width:46px;height:24px;background:rgba(0,240,255,.07);border:1px solid var(--bdr);border-radius:12px;position:relative;transition:all .3s;flex-shrink:0;cursor:pointer;}
+.sh-m-toggle.on{background:rgba(0,255,136,.18);border-color:rgba(0,255,136,.38);}
+.sh-m-toggle::after{content:'';position:absolute;width:17px;height:17px;border-radius:50%;background:var(--txd);top:2.5px;left:3px;transition:all .3s;}
+.sh-m-toggle.on::after{left:23px;background:var(--g);box-shadow:0 0 7px var(--g);}
+
+/* Settings panel */
+.settings-card{background:var(--panel);border:1px solid var(--bdr);border-radius:16px;padding:18px;margin-bottom:13px;}
+.settings-title{font-family:var(--fh);font-size:10px;color:var(--c);letter-spacing:3px;margin-bottom:14px;}
+.settings-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(0,240,255,.06);}
+.settings-row:last-child{border-bottom:none;padding-bottom:0;}
+.settings-lbl{font-size:12px;color:var(--tx);}
+.settings-sub{font-size:9px;color:var(--txd);margin-top:2px;}
+.settings-btn{font-family:var(--fh);font-size:9px;padding:6px 14px;border-radius:8px;border:1px solid var(--bdr2);color:var(--c);background:rgba(0,240,255,.07);cursor:pointer;letter-spacing:1px;transition:.2s;}
+.settings-btn:active{background:rgba(0,240,255,.2);}
+.settings-btn.danger{border-color:rgba(255,0,60,.3);color:var(--r);background:rgba(255,0,60,.06);}
+
+/* PIN Change modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:8000;display:none;align-items:center;justify-content:center;backdrop-filter:blur(8px);}
+.modal-overlay.show{display:flex;}
+.modal-box{background:rgba(0,4,12,.97);border:1px solid var(--bdr2);border-radius:18px;padding:26px;width:min(360px,90vw);display:flex;flex-direction:column;gap:14px;}
+.modal-title{font-family:var(--fh);font-size:12px;color:var(--c);letter-spacing:3px;}
+.modal-input{width:100%;background:rgba(0,240,255,.05);border:1px solid var(--bdr);color:var(--tx);font-family:var(--fm);font-size:14px;padding:12px 14px;border-radius:10px;outline:none;-webkit-appearance:none;text-align:center;letter-spacing:4px;}
+.modal-btns{display:flex;gap:10px;}
+.modal-btn{flex:1;height:46px;border-radius:10px;font-family:var(--fh);font-size:10px;letter-spacing:2px;border:1px solid var(--bdr);cursor:pointer;transition:.2s;}
+.modal-btn.cancel{background:rgba(255,255,255,.04);color:var(--txd);}
+.modal-btn.confirm{background:rgba(0,240,255,.1);border-color:var(--bdr2);color:var(--c);}
+.modal-btn.confirm:active{background:rgba(0,240,255,.25);}
+.modal-err{font-size:10px;color:var(--r);text-align:center;letter-spacing:1px;min-height:14px;}
+
+/* Bottom nav — 8 items */
+.bottom-nav{position:fixed;bottom:0;left:0;right:0;height:72px;background:rgba(0,2,8,.97);backdrop-filter:blur(20px);border-top:1px solid var(--bdr);display:flex;justify-content:space-around;align-items:center;padding-bottom:env(safe-area-inset-bottom);z-index:100;}
+.nav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--txd);font-size:16px;transition:.3s;height:100%;cursor:pointer;}
+.nav-item span{font-size:6px;font-family:var(--fh);margin-top:3px;letter-spacing:1px;font-weight:bold;}
+.nav-item.active{color:var(--c);text-shadow:0 0 12px var(--c);}
+.nav-item.active span{color:var(--c);}
+
+/* v10.0 Responsive Fixes */
+*{box-sizing:border-box;}
+.content{overflow-x:hidden;}
+.grid-2{grid-template-columns:repeat(2,1fr);gap:10px;}
+@media(max-width:360px){
+  .grid-2{grid-template-columns:1fr;}
+  .action-btn{height:70px;font-size:10px;}
+  .media-ctrls{padding:0 4px;}
+  .m-btn{width:48px;height:48px;font-size:17px;}
+  .m-btn.play{width:66px;height:66px;font-size:26px;}
+}
+/* Discord config input */
+.discord-inp{width:100%;background:rgba(0,240,255,.05);border:1px solid var(--bdr);color:var(--tx);font-family:var(--fm);font-size:11px;padding:8px 10px;border-radius:8px;outline:none;margin-bottom:10px;word-break:break-all;}
+.discord-inp:focus{border-color:var(--bdr2);}
+
+
+/* PRD v10.0 — Shake animation for wrong PIN */
+@keyframes shakeX {
+  0%,100%{transform:translateX(0)}
+  15%{transform:translateX(-8px)}
+  30%{transform:translateX(8px)}
+  45%{transform:translateX(-6px)}
+  60%{transform:translateX(6px)}
+  75%{transform:translateX(-4px)}
+  90%{transform:translateX(4px)}
+}
+.pin-shake{animation:shakeX .5s ease forwards;}
+
+/* PRD v10.0 — Success transition */
+@keyframes loginSuccess {
+  0%{opacity:1;transform:scale(1)}
+  50%{opacity:.8;transform:scale(1.02)}
+  100%{opacity:0;transform:scale(.95)}
+}
+
+/* PRD v10.0 — Wrong attempt counter */
+.attempt-counter{font-family:var(--fm);font-size:9px;color:var(--y);letter-spacing:2px;margin-top:6px;min-height:14px;text-align:center;}
+
+/* PRD v10.0 — Thinking animation in agent */
+@keyframes thinkDot{0%,100%{opacity:.2;transform:translateY(0)}50%{opacity:1;transform:translateY(-4px)}}
+.think-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--c);margin:0 3px;animation:thinkDot 1.2s ease-in-out infinite;}
+.think-dot:nth-child(2){animation-delay:.2s}
+.think-dot:nth-child(3){animation-delay:.4s}
+.thinking-label{font-family:var(--fm);font-size:10px;color:rgba(0,200,232,.5);letter-spacing:2px;display:flex;align-items:center;gap:4px;padding:8px 0;}
+
+/* PRD v10.0 — JARVIS label in agent reply */
+.jarvis-label{font-family:var(--fh);font-size:10px;color:var(--c);letter-spacing:2px;margin-bottom:6px;display:block;text-shadow:0 0 8px rgba(0,200,232,.4);}
+
+/* PRD v10.0 — Agent input pill */
+.agent-text-input{flex:1;background:rgba(0,200,232,.05);border:1px solid var(--bdr);color:var(--tx);font-family:var(--fm);font-size:16px;padding:0 16px;height:52px;border-radius:26px;outline:none;-webkit-appearance:none;}
+.agent-text-input:focus{border-color:var(--bdr2);box-shadow:0 0 0 3px rgba(0,200,232,.08);}
+
+/* PRD v10.0 — Send button gradient circle */
+.agent-send-btn{width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,rgba(0,150,220,.7),rgba(0,80,180,.8));border:1px solid rgba(0,200,232,.35);color:var(--c);font-size:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:.2s;flex-shrink:0;box-shadow:0 4px 12px rgba(0,0,0,.3);}
+.agent-send-btn:active{background:linear-gradient(135deg,rgba(0,200,232,.6),rgba(0,120,220,.8));transform:scale(.95);}
+
+/* PRD v10.0 — Voice button pill */
+.agent-mic-btn{flex:1;height:52px;border-radius:26px;background:rgba(0,200,232,.06);border:1px solid var(--bdr);color:var(--c);font-family:var(--fh);font-size:10px;letter-spacing:1px;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;transition:.2s;}
+.agent-mic-btn.listening{background:rgba(255,68,68,.1);border-color:rgba(255,68,68,.4);color:var(--r);box-shadow:0 0 0 3px rgba(255,68,68,.12),0 0 20px rgba(255,68,68,.15);animation:micPulse .8s infinite alternate;}
+
+/* PRD v10.0 — Agent reply improved */
+.agent-reply{font-size:16px;line-height:1.65;color:var(--tx);min-height:56px;padding:12px 14px;background:rgba(0,10,28,.5);border-radius:10px;border:1px solid rgba(0,200,232,.08);margin-bottom:14px;white-space:pre-wrap;}
+
+/* PRD v10.0 — Tools used chips */
+.tools-used{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;}
+.tool-chip{font-family:var(--fm);font-size:8px;padding:2px 8px;border-radius:10px;background:rgba(0,200,232,.07);border:1px solid rgba(0,200,232,.15);color:rgba(0,200,232,.7);letter-spacing:.5px;}
+
+/* PRD v10.0 — 5+MORE nav */
+.more-drawer{position:fixed;bottom:72px;left:0;right:0;background:rgba(3,8,20,.97);border-top:1px solid var(--bdr);backdrop-filter:blur(20px);z-index:99;transform:translateY(100%);transition:.3s cubic-bezier(0.2,0.8,0.2,1);}
+.more-drawer.open{transform:translateY(0);}
+.more-drawer-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--bdr);}
+.more-item{background:rgba(3,8,20,.97);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:18px 8px;gap:6px;cursor:pointer;font-size:22px;transition:.2s;}
+.more-item:active{background:rgba(0,200,232,.08);}
+.more-item span{font-family:var(--fh);font-size:7px;color:var(--txd);letter-spacing:1px;}
+.more-overlay{position:fixed;inset:0;bottom:72px;z-index:98;display:none;}
+.more-overlay.open{display:block;}
+
+/* PRD v10.0 — Better stat bars */
+.bar-bg{width:100%;height:10px;background:rgba(255,255,255,.05);border-radius:5px;overflow:hidden;border:1px solid rgba(255,255,255,.06);}
+.bar-fill{height:100%;background:linear-gradient(90deg,#0055cc,var(--c));transition:width .6s ease;box-shadow:0 0 8px rgba(0,200,232,.3);}
+
+/* PRD v10.0 — Action buttons improved */
+.action-btn{background:var(--panel);border:1px solid var(--bdr);border-radius:var(--radius);height:82px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--tx);font-family:var(--fh);font-size:10px;letter-spacing:1px;transition:var(--transition);font-weight:bold;cursor:pointer;}
+.action-btn:active{background:rgba(0,200,232,.15);border-color:var(--bdr2);transform:scale(.96);box-shadow:0 0 16px rgba(0,200,232,.2);color:var(--c);}
+
+/* PRD v10.0 — Stat box improved */
+.stat-box{background:var(--panel);border:1px solid var(--bdr);border-radius:var(--radius);padding:16px;margin-bottom:12px;}
+.stat-lbl{display:flex;justify-content:space-between;font-size:11px;font-weight:bold;margin-bottom:10px;color:var(--tx);font-family:var(--fh);letter-spacing:1px;}
+</style>
+</head>
+<body>
+
+<div id="TOAST">OK</div>
+
+<!-- ═══════════════ LOGIN SCREEN ═══════════════ -->
+<div id="LOGIN_SCREEN">
+    <div class="login-logo">J.A.R.V.I.S</div>
+    <div class="login-sub">NEURAL ULTRA EDITION</div>
+    <div class="login-version">REMOTE UPLINK • SECURE</div>
+
+    <!-- Fingerprint / Biometric -->
+    <div class="bio-btn" id="BIO_BTN" onclick="tryBiometric()" title="Use fingerprint">🔐</div>
+    <div class="bio-label">TOUCH TO USE FINGERPRINT</div>
+
+    <div class="or-divider">
+        <div class="or-line"></div>
+        <div class="or-text">OR ENTER PIN</div>
+        <div class="or-line"></div>
+    </div>
+
+    <div class="pin-dots">
+        <div class="pin-dot" id="pd1"></div><div class="pin-dot" id="pd2"></div>
+        <div class="pin-dot" id="pd3"></div><div class="pin-dot" id="pd4"></div>
+    </div>
+    <div class="numpad">
+        <div class="num-btn" onclick="addPin('1')">1</div>
+        <div class="num-btn" onclick="addPin('2')">2</div>
+        <div class="num-btn" onclick="addPin('3')">3</div>
+        <div class="num-btn" onclick="addPin('4')">4</div>
+        <div class="num-btn" onclick="addPin('5')">5</div>
+        <div class="num-btn" onclick="addPin('6')">6</div>
+        <div class="num-btn" onclick="addPin('7')">7</div>
+        <div class="num-btn" onclick="addPin('8')">8</div>
+        <div class="num-btn" onclick="addPin('9')">9</div>
+        <div class="num-btn" style="font-size:11px;color:var(--txd);" onclick="addPin('*')">⚙️</div>
+        <div class="num-btn" onclick="addPin('0')">0</div>
+        <div class="num-btn del-btn" onclick="delPin()">⌫</div>
+    </div>
+    <div class="login-err" id="LOGIN_ERR"></div>
+</div>
+
+<!-- ═══════════════ PIN CHANGE MODAL ═══════════════ -->
+<div class="modal-overlay" id="PIN_MODAL">
+    <div class="modal-box">
+        <div class="modal-title">🔑 CHANGE PIN</div>
+        <input class="modal-input" type="password" inputmode="numeric" id="OLD_PIN" placeholder="Current PIN" maxlength="8">
+        <input class="modal-input" type="password" inputmode="numeric" id="NEW_PIN" placeholder="New PIN (4+ digits)" maxlength="8">
+        <input class="modal-input" type="password" inputmode="numeric" id="CONF_PIN" placeholder="Confirm New PIN" maxlength="8">
+        <div class="modal-err" id="PIN_ERR"></div>
+        <div class="modal-btns">
+            <div class="modal-btn cancel" onclick="closePinModal()">CANCEL</div>
+            <div class="modal-btn confirm" onclick="submitPinChange()">UPDATE PIN</div>
+        </div>
+    </div>
+</div>
+
+<!-- ═══════════════ MAIN APP ═══════════════ -->
+<div id="APP">
+    <div class="header">
+        <div class="logo">J.A.R.V.I.S</div>
+        <div id="NEURAL_BADGE_MOB" style="display:none;font-size:9px;font-family:monospace;color:#D4A017;border:1px solid rgba(212,160,23,.35);padding:3px 8px;letter-spacing:2px;border-radius:3px;background:rgba(212,160,23,.08);animation:mobilePulse 1.5s infinite;">⬥ NEURAL</div>
+        <div class="status-pill">
+            <div class="status-dot" id="STATUS_DOT"></div>
+            <span id="STATUS_TXT">CONNECTING</span>
+        </div>
+    </div>
+
+    <div class="content">
+
+        <!-- ── AGENT TAB ── -->
+        <div class="tab-section active" id="TAB_AGENT">
+            <div class="sec-title">🧠 NEURAL AGENT</div>
+            <div class="agent-box">
+                <span class="jarvis-label">J.A.R.V.I.S</span>
+                <div class="agent-reply" id="AGENT_REPLY">Neural Agent ready. Ask me anything or give any command, Sir.</div>
+                <div id="AGENT_TOOLS" class="tools-used"></div>
+                <div class="agent-input-row" style="gap:10px;margin-bottom:12px;">
+                    <input class="agent-text-input" type="text" id="AGENT_INPUT" placeholder="Type a command..." autocomplete="off" onkeydown="if(event.key==='Enter')sendAgentText()">
+                    <div class="agent-send-btn" onclick="sendAgentText()">➤</div>
+                </div>
+                <div class="agent-controls">
+                    <div class="agent-mic-btn" id="AGENT_MIC" onclick="toggleAgentVoice()">🎤 <span>VOICE COMMAND</span></div>
+                    <div class="agent-clear-btn" onclick="clearAgentHistory()" title="Clear history">🗑</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── CONTROL TAB ── -->
+        <div class="tab-section" id="TAB_CTRL">
+            <div class="sec-title">⚡ QUICK CONTROLS</div>
+            <div class="grid-2" style="margin-bottom:13px;">
+                <div class="action-btn" onclick="sysCmd('lock')"><div class="btn-icon">🔒</div>LOCK PC</div>
+                <div class="action-btn" onclick="sysCmd('sleep')"><div class="btn-icon">😴</div>SLEEP</div>
+                <div class="action-btn warn-btn" onclick="sysCmd('restart')"><div class="btn-icon">🔄</div>RESTART</div>
+                <div class="action-btn danger" onclick="sysCmd('shutdown')"><div class="btn-icon">⭕</div>SHUTDOWN</div>
+            </div>
+
+            <div class="sec-title">🎵 MEDIA CONTROL</div>
+            <div class="media-box">
+                <div class="media-ctrls">
+                    <div class="m-btn" onclick="mediaCmd('rewind')">⏮</div>
+                    <div class="m-btn play" onclick="mediaCmd('play')">⏯</div>
+                    <div class="m-btn" onclick="mediaCmd('forward')">⏭</div>
+                </div>
+                <input type="range" min="0" max="100" value="50" id="VOL_SLIDER" oninput="setVolume(this.value)">
+                <div style="font-family:var(--fh);font-size:9px;color:var(--txd);letter-spacing:2px;margin-top:6px;">VOLUME: <span id="VOL_VAL">50</span>%</div>
+            </div>
+
+            <div class="sec-title">📱 WHATSAPP</div>
+            <div class="grid-2">
+                <div class="action-btn" onclick="openWhatsApp()"><div class="btn-icon">💬</div>OPEN WA</div>
+                <div class="action-btn" onclick="peekScreen()"><div class="btn-icon">👁</div>PEEK SCREEN</div>
+            </div>
+        </div>
+
+        <!-- ── STATS TAB ── -->
+        <div class="tab-section" id="TAB_STATS">
+            <div class="sec-title">📊 SYSTEM STATUS</div>
+            <div class="stat-box">
+                <div class="stat-lbl"><span>CPU</span><span id="MCPU">—%</span></div>
+                <div class="bar-bg"><div class="bar-fill" id="MCPU_BAR" style="width:0%"></div></div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-lbl"><span>RAM</span><span id="MRAM">—%</span></div>
+                <div class="bar-bg"><div class="bar-fill ram" id="MRAM_BAR" style="width:0%"></div></div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-lbl"><span>BATTERY</span><span id="MBAT">—%</span></div>
+                <div class="bar-bg"><div class="bar-fill bat" id="MBAT_BAR" style="width:0%"></div></div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-lbl"><span>DISK</span><span id="MDISK">—%</span></div>
+                <div class="bar-bg"><div class="bar-fill" id="MDISK_BAR" style="width:0%"></div></div>
+            </div>
+            <div class="stat-box" style="display:flex;justify-content:space-around;padding:14px;">
+                <div style="text-align:center;">
+                    <div style="font-family:var(--fh);font-size:11px;color:var(--c);" id="MNET_D">—</div>
+                    <div style="font-size:9px;color:var(--txd);letter-spacing:1px;margin-top:4px;">↓ DOWN</div>
+                </div>
+                <div style="text-align:center;">
+                    <div style="font-family:var(--fh);font-size:11px;color:var(--g);" id="MNET_U">—</div>
+                    <div style="font-size:9px;color:var(--txd);letter-spacing:1px;margin-top:4px;">↑ UP</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── SECURITY TAB ── -->
+        <div class="tab-section" id="TAB_SEC">
+            <div class="sec-title">🛡 SECURITY</div>
+            <div class="shield-banner" id="M_SHIELD">
+                <div class="shield-big" id="M_SHIELD_ICO">🛡️</div>
+                <div>
+                    <div class="shield-state-m" id="M_SHIELD_STATE">SYSTEM PROTECTED</div>
+                    <div class="shield-sub-m" id="M_SHIELD_SUB">All security systems active</div>
+                </div>
+            </div>
+            <div class="sec-stats-grid">
+                <div class="sec-stat-card"><div class="sec-stat-val green" id="M_OK">0</div><div class="sec-stat-lbl">ALLOWED</div></div>
+                <div class="sec-stat-card"><div class="sec-stat-val red" id="M_BLK">0</div><div class="sec-stat-lbl">BLOCKED</div></div>
+                <div class="sec-stat-card"><div class="sec-stat-val" id="M_TOT">0</div><div class="sec-stat-lbl">TOTAL CMDS</div></div>
+                <div class="sec-stat-card"><div class="sec-stat-val" id="M_REM">0</div><div class="sec-stat-lbl">REMOTE</div></div>
+            </div>
+            <div class="toggle-row"><span class="toggle-lbl">Blacklist</span><div class="m-toggle on" id="MT_BL" onclick="mToggleSec('blacklist',this)"></div></div>
+            <div class="toggle-row"><span class="toggle-lbl">AI Guardrails</span><div class="m-toggle on" id="MT_GR" onclick="mToggleSec('guardrail',this)"></div></div>
+            <div class="toggle-row"><span class="toggle-lbl">Motion Detection</span><div class="m-toggle" id="MT_MD" onclick="mToggleMotion(this)"></div></div>
+            <div class="toggle-row"><span class="toggle-lbl">Auto-Lock on Threat</span><div class="m-toggle" id="MT_AL" onclick="mToggleSec('autolock',this)"></div></div>
+            <div class="cmd-log-m" id="M_CMD_LOG"><span style="color:rgba(0,240,255,.3);">Command log will appear here...</span></div>
+        </div>
+
+        <!-- ── CAMERAS TAB ── -->
+        <div class="tab-section" id="TAB_CAM">
+            <div class="cam-hero">
+                <div class="cam-hero-title">
+                    <span>SURVEILLANCE</span>
+                    <div style="display:flex;gap:8px;">
+                        <div class="m-cam-btn" style="width:auto;padding:0 12px;" onclick="mToggleAllCams(true)">ALL ON</div>
+                        <div class="m-cam-btn del-btn" style="width:auto;padding:0 12px;" onclick="mToggleAllCams(false)">ALL OFF</div>
+                    </div>
+                </div>
+                <div style="font-family:var(--fh);font-size:11px;color:var(--g);" id="M_CAM_ON">0 ON</div>
+            </div>
+            <div id="M_CAM_CARDS"></div>
+            <div class="add-cam-box">
+                <div class="add-cam-title">➕ ADD CAMERA</div>
+                <input class="m-input" id="M_CAM_NAME" placeholder="Camera name" type="text">
+                <select class="m-select" id="M_CAM_TYPE" onchange="mCamTypeChange()">
+                    <option value="webcam">PC Webcam</option>
+                    <option value="phone">Phone IP Webcam</option>
+                    <option value="ip">IP / RTSP Stream</option>
+                    <option value="usb">USB Camera</option>
+                </select>
+                <input class="m-input" id="M_CAM_SRC" placeholder="Source (0 for default webcam)" type="text">
+                <div class="m-add-btn" onclick="mAddCamera()">➕ ADD CAMERA</div>
+            </div>
+        </div>
+
+        <!-- ── SMART HOME TAB ── -->
+        <div class="tab-section" id="TAB_SMARTHOME">
+            <div class="sec-title">🏠 SMART HOME</div>
+            <div class="grid-2" style="margin-bottom:13px;">
+                <div class="action-btn" onclick="mShAllOn()"><div class="btn-icon">💡</div>ALL ON</div>
+                <div class="action-btn danger" onclick="mShAllOff()"><div class="btn-icon">🌑</div>ALL OFF</div>
+            </div>
+            <div id="M_SH_DEVICES"></div>
+        </div>
+
+        <!-- ── SETTINGS TAB ── -->
+        <div class="tab-section" id="TAB_SETTINGS">
+            <div class="sec-title">⚙️ SETTINGS</div>
+            <div class="settings-card">
+                <div class="settings-title">🔐 SECURITY</div>
+                <div class="settings-row">
+                    <div>
+                        <div class="settings-lbl">Change PIN</div>
+                        <div class="settings-sub">Update your 4-digit login PIN</div>
+                    </div>
+                    <div class="settings-btn" onclick="openPinModal()">CHANGE</div>
+                </div>
+                <div class="settings-row">
+                    <div>
+                        <div class="settings-lbl">Fingerprint Login</div>
+                        <div class="settings-sub" id="BIO_STATUS">Checking availability...</div>
+                    </div>
+                    <div class="settings-btn" id="BIO_TOGGLE_BTN" onclick="toggleBioSave()">ENABLE</div>
+                </div>
+                <div class="settings-row">
+                    <div>
+                        <div class="settings-lbl">API Token</div>
+                        <div class="settings-sub" id="TOKEN_HINT">Used for secure API calls</div>
+                    </div>
+                    <div class="settings-btn" onclick="showToken()">VIEW</div>
+                </div>
+            </div>
+            <div class="settings-card">
+                <div class="settings-title">🌐 SERVER</div>
+                <div class="settings-row">
+                    <div>
+                        <div class="settings-lbl">Server Address</div>
+                        <div class="settings-sub" id="SERVER_ADDR_LBL">—</div>
+                    </div>
+                    <div class="settings-btn" onclick="changeServer()">CHANGE</div>
+                </div>
+                <div class="settings-row">
+                    <div>
+                        <div class="settings-lbl">Connection Status</div>
+                        <div class="settings-sub" id="CONN_STATUS_LBL">Checking...</div>
+                    </div>
+                    <div class="settings-btn" onclick="pingServer()">PING</div>
+                </div>
+            </div>
+            <div class="settings-card">
+                <div class="settings-title">🚪 SESSION</div>
+                <div class="settings-row">
+                    <div>
+                        <div class="settings-lbl">Logout</div>
+                        <div class="settings-sub">Return to login screen</div>
+                    </div>
+                    <div class="settings-btn danger" onclick="logout()">LOGOUT</div>
+                </div>
+            </div>
+        </div>
+
+    </div><!-- /content -->
+
+    <!-- PRD v10.0 — 5+MORE bottom nav -->
+    <div class="more-overlay" id="MORE_OVERLAY" onclick="closeMore()"></div>
+    <div class="more-drawer" id="MORE_DRAWER">
+      <div class="more-drawer-grid">
+        <div class="more-item" onclick="navMore('SEC')">🛡️<span>SECURITY</span></div>
+        <div class="more-item" onclick="navMore('SMARTHOME')">🏠<span>HOME</span></div>
+        <div class="more-item" onclick="navMore('SETTINGS')">⚙️<span>SETTINGS</span></div>
+      </div>
+    </div>
+    <div class="bottom-nav">
+        <div class="nav-item active" id="NAV_AGENT" onclick="nav('AGENT',this)">🧠<span>AGENT</span></div>
+        <div class="nav-item" id="NAV_CTRL" onclick="nav('CTRL',this)">⚡<span>CTRL</span></div>
+        <div class="nav-item" id="NAV_STATS" onclick="nav('STATS',this)">📊<span>STATS</span></div>
+        <div class="nav-item" id="NAV_CAM" onclick="nav('CAM',this)">📹<span>CAMS</span></div>
+        <div class="nav-item" id="NAV_MORE" onclick="toggleMore(this)">⋯<span>MORE</span></div>
+    </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════
+// CONFIG
+// ════════════════════════════════════════════════════════
+let SERVER    = localStorage.getItem('jarvis_server') || 'http://' + location.hostname + ':5000';
+let API_TOKEN = localStorage.getItem('jarvis_token') || '';
+// AI keys are managed server-side via .env — never exposed to the browser.
+let pinBuffer = '';
+let bioEnabled = localStorage.getItem('jarvis_bio') === '1';
+let statsTimer = null;
+
+function showToast(msg, isErr=false, isWarn=false) {
+    const t = document.getElementById('TOAST');
+    t.textContent = msg;
+    t.className = 'show' + (isErr ? ' error' : isWarn ? ' warn' : '');
+    clearTimeout(t._t);
+    t._t = setTimeout(() => t.className = '', 2800);
+}
+
+function headers() {
+    const h = {'Content-Type': 'application/json'};
+    if (API_TOKEN) h['X-JARVIS-Token'] = API_TOKEN;
+    return h;
+}
+
+// ════════════════════════════════════════════════════════
+// LOGIN & BIOMETRIC
+// ════════════════════════════════════════════════════════
+async function tryBiometric() {
+    if (!window.PublicKeyCredential) {
+        showToast('Biometrics not supported on this browser', true);
+        return;
+    }
+    try {
+        // Use credential get for fingerprint
+        const challenge = new Uint8Array(32);
+        crypto.getRandomValues(challenge);
+        // Simplified biometric check using platform authenticator
+        const ok = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+        if (!ok) { showToast('No fingerprint sensor found', false, true); return; }
+
+        // Try credential get
+        const cred = await navigator.credentials.get({
+            publicKey: {
+                challenge,
+                timeout: 30000,
+                userVerification: 'required',
+                rpId: location.hostname || 'localhost'
+            }
+        }).catch(() => null);
+
+        if (cred) {
+            // Biometric passed — attempt login with stored PIN
+            const savedPin = localStorage.getItem('jarvis_bio_pin');
+            if (savedPin) {
+                await doLogin(savedPin);
+            } else {
+                showToast('Fingerprint OK! Enter PIN once to save it.', false, true);
+            }
+        }
+    } catch(e) {
+        showToast('Fingerprint auth failed', true);
+    }
+}
+
+async function checkBioAvailability() {
+    const lbl = document.getElementById('BIO_STATUS');
+    const btn = document.getElementById('BIO_TOGGLE_BTN');
+    if (!window.PublicKeyCredential) {
+        if (lbl) lbl.textContent = 'Not supported on this browser';
+        if (btn) { btn.textContent = 'N/A'; btn.style.opacity = '.4'; btn.onclick = null; }
+        return;
+    }
+    try {
+        const ok = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+        if (ok) {
+            if (lbl) lbl.textContent = bioEnabled ? 'Fingerprint enabled ✓' : 'Available — tap to enable';
+            if (btn) btn.textContent = bioEnabled ? 'DISABLE' : 'ENABLE';
+        } else {
+            if (lbl) lbl.textContent = 'No fingerprint sensor detected';
+            if (btn) { btn.textContent = 'N/A'; btn.style.opacity = '.4'; }
+        }
+    } catch(e) {
+        if (lbl) lbl.textContent = 'Could not check availability';
+    }
+}
+
+function toggleBioSave() {
+    bioEnabled = !bioEnabled;
+    localStorage.setItem('jarvis_bio', bioEnabled ? '1' : '0');
+    checkBioAvailability();
+    showToast(bioEnabled ? 'Fingerprint enabled' : 'Fingerprint disabled');
+}
+
+function addPin(d) {
+    if (d === '*') { openPinModalFromLogin(); return; }
+    if (pinBuffer.length >= 4) return;
+    pinBuffer += d;
+    if (navigator.vibrate) navigator.vibrate(30);
+    updatePinDots();
+    if (pinBuffer.length === 4) {
+        setTimeout(() => doLogin(pinBuffer), 200);
+    }
+}
+
+function delPin() {
+    pinBuffer = pinBuffer.slice(0, -1);
+    updatePinDots();
+    document.getElementById('LOGIN_ERR').textContent = '';
+}
+
+function updatePinDots() {
+    for (let i = 1; i <= 4; i++) {
+        const d = document.getElementById('pd' + i);
+        if (d) d.classList.toggle('filled', i <= pinBuffer.length);
+    }
+}
+
+async function doLogin(pin) {
+    try {
+        const r = await fetch(SERVER + '/api/login', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({pin})
+        });
+        const d = await r.json();
+        if (d.status === 'success') {
+            if (d.token) {
+                API_TOKEN = d.token;
+                localStorage.setItem('jarvis_token', d.token);
+            }
+            // Save PIN for biometric
+            if (bioEnabled) localStorage.setItem('jarvis_bio_pin', pin);
+            document.getElementById('LOGIN_SCREEN').style.opacity = '0';
+            setTimeout(() => {
+                document.getElementById('LOGIN_SCREEN').style.display = 'none';
+                document.getElementById('APP').style.display = 'flex';
+                setTimeout(() => document.getElementById('APP').style.opacity = '1', 50);
+            }, 500);
+            pinBuffer = '';
+            updatePinDots();
+            window._wrongAttempts = 0;
+            startApp();
+        } else {
+            pinBuffer = '';
+            updatePinDots();
+            if (navigator.vibrate) navigator.vibrate([80, 40, 80, 40, 80]);
+            // PRD v10.0: Shake animation on wrong PIN
+            const numpad = document.querySelector('.numpad');
+            const dots   = document.querySelector('.pin-dots');
+            if (numpad) { numpad.classList.add('pin-shake'); setTimeout(()=>numpad.classList.remove('pin-shake'),550); }
+            if (dots)   { dots.classList.add('pin-shake');   setTimeout(()=>dots.classList.remove('pin-shake'),550); }
+            window._wrongAttempts = (window._wrongAttempts || 0) + 1;
+            let errMsg = '✗ WRONG PIN';
+            if (window._wrongAttempts >= 2) errMsg += ' · Attempt ' + window._wrongAttempts;
+            document.getElementById('LOGIN_ERR').textContent = errMsg;
+            setTimeout(() => document.getElementById('LOGIN_ERR').textContent = '', 2800);
+        }
+    } catch(e) {
+        pinBuffer = '';
+        updatePinDots();
+        document.getElementById('LOGIN_ERR').textContent = 'Cannot reach server';
+    }
+}
+
+// ════════════════════════════════════════════════════════
+// PIN CHANGE
+// ════════════════════════════════════════════════════════
+function openPinModal() {
+    document.getElementById('OLD_PIN').value = '';
+    document.getElementById('NEW_PIN').value = '';
+    document.getElementById('CONF_PIN').value = '';
+    document.getElementById('PIN_ERR').textContent = '';
+    document.getElementById('PIN_MODAL').classList.add('show');
+}
+
+function openPinModalFromLogin() {
+    // Allow changing PIN from login screen if user clicks ⚙️
+    openPinModal();
+}
+
+function closePinModal() {
+    document.getElementById('PIN_MODAL').classList.remove('show');
+}
+
+async function submitPinChange() {
+    const old_pin = document.getElementById('OLD_PIN').value.trim();
+    const new_pin = document.getElementById('NEW_PIN').value.trim();
+    const conf    = document.getElementById('CONF_PIN').value.trim();
+    const err     = document.getElementById('PIN_ERR');
+    if (!old_pin || !new_pin) { err.textContent = 'All fields required'; return; }
+    if (new_pin !== conf) { err.textContent = 'PINs do not match'; return; }
+    if (new_pin.length < 4) { err.textContent = 'PIN must be at least 4 digits'; return; }
+    try {
+        const r = await fetch(SERVER + '/api/pin/change', {
+            method: 'POST',
+            headers: headers(),
+            body: JSON.stringify({old_pin, new_pin})
+        });
+        const d = await r.json();
+        if (d.ok) {
+            closePinModal();
+            showToast('PIN updated successfully!');
+            if (bioEnabled) localStorage.setItem('jarvis_bio_pin', new_pin);
+        } else {
+            err.textContent = d.error || 'Failed to update PIN';
+        }
+    } catch(e) {
+        err.textContent = 'Server error: ' + e.message;
+    }
+}
+
+// ════════════════════════════════════════════════════════
+// APP INIT
+// ════════════════════════════════════════════════════════
+function startApp() {
+    pingServer();                         // ✅ reconnect-aware boot
+    _mStatsTimer = setInterval(fetchStats, 4000);
+    fetchStats();
+    mLoadCameras();
+    mLoadSmartHome();
+    mLoadSecStats();
+    checkBioAvailability();
+    document.getElementById('SERVER_ADDR_LBL').textContent = SERVER;
+    startMobileHeartbeat();
+    requestMobileNotifPerm();
+}
+
+// ── Mobile Browser Notification ──────────────────────────────
+async function requestMobileNotifPerm(){
+    if('Notification' in window && Notification.permission !== 'granted')
+        await Notification.requestPermission().catch(()=>{});
+}
+function mobileNotify(title, body, urgent=false){
+    if('Notification' in window && Notification.permission === 'granted'){
+        try{
+            const n = new Notification(title, { body: body.substring(0,80), tag:'jarvis-mobile', renotify:true });
+            n.onclick = ()=>{ window.focus(); n.close(); };
+            setTimeout(()=>n.close(), urgent?10000:6000);
+        }catch(e){}
+    }
+}
+
+// ── Heartbeat + Neural status poll ───────────────────────────
+let mHeartbeatTimer = null;
+let mNeuralActive   = false;
+
+function startMobileHeartbeat() {
+    if (mHeartbeatTimer) return;
+    mHeartbeatTimer = setInterval(pollMobileHeartbeat, 6000);
+}
+
+async function pollMobileHeartbeat() {
+    try {
+        // ✅ FIX: /api/events/poll returns {events:[], heartbeat:[], count:N}
+        const r = await fetch(SERVER + '/api/events/poll?mode=mobile', {signal: AbortSignal.timeout(4000)});
+        const d = await r.json();
+
+        // Combine both arrays — not d.messages (that field doesn't exist)
+        const allMsgs = [...(d.events || []), ...(d.heartbeat || [])];
+        if (allMsgs.length) {
+            allMsgs.forEach(m => {
+                const txt  = m.msg || m.message || '';
+                if (!txt) return;
+                const prio = m.priority || m.type || 'low';
+                const icon = prio==='critical'?'🚨':prio==='high'?'⚡':'💡';
+                showToast(icon + ' ' + txt.substring(0, 90),
+                          prio==='critical', prio==='high');
+                mobileNotify('J.A.R.V.I.S', txt, prio==='critical');
+            });
+        }
+
+        // Check Neural Mode status
+        const ns = await fetch(SERVER + '/api/neural/status', {signal: AbortSignal.timeout(3000)});
+        const nd = await ns.json();
+        if (nd) {
+            const wasActive = mNeuralActive;
+            mNeuralActive = !!nd.active;
+            const badge = document.getElementById('NEURAL_BADGE_MOB');
+            if (badge) badge.style.display = nd.active ? 'block' : 'none';
+            if (!wasActive && nd.active)
+                showToast('⬥ Neural Mode is active on PC', false, false);
+            if (wasActive && !nd.active)
+                showToast('Neural Mode deactivated', false, false);
+        }
+    } catch(e) {}
+}
+
+
+
+function logout() {
+    clearInterval(statsTimer);
+    document.getElementById('APP').style.opacity = '0';
+    document.getElementById('APP').style.display = 'none';
+    document.getElementById('LOGIN_SCREEN').style.opacity = '1';
+    document.getElementById('LOGIN_SCREEN').style.display = 'flex';
+    pinBuffer = '';
+    updatePinDots();
+}
+
+// ════════════════════════════════════════════════════════
+// NAVIGATION — PRD v10.0 (5+MORE tabs)
+// ════════════════════════════════════════════════════════
+function nav(tab, el) {
+    closeMore();
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    if (el) el.classList.add('active');
+    document.querySelectorAll('.tab-section').forEach(s => s.classList.remove('active'));
+    const sec = document.getElementById('TAB_' + tab);
+    if (sec) sec.classList.add('active');
+    if (tab === 'SMARTHOME') mLoadSmartHome();
+    if (tab === 'CAM') mLoadCameras();
+    if (tab === 'SETTINGS') checkBioAvailability();
+    if (navigator.vibrate) navigator.vibrate(25);
+}
+
+function toggleMore(el) {
+    const drawer = document.getElementById('MORE_DRAWER');
+    const overlay = document.getElementById('MORE_OVERLAY');
+    const isOpen = drawer.classList.contains('open');
+    if (isOpen) { closeMore(); }
+    else {
+        drawer.classList.add('open');
+        overlay.classList.add('open');
+        el.classList.add('active');
+        if (navigator.vibrate) navigator.vibrate(20);
+    }
+}
+
+function closeMore() {
+    document.getElementById('MORE_DRAWER').classList.remove('open');
+    document.getElementById('MORE_OVERLAY').classList.remove('open');
+    const moreBtn = document.getElementById('NAV_MORE');
+    if (moreBtn && !['SEC','SMARTHOME','SETTINGS'].includes(window._activeMoreTab)) {
+        moreBtn.classList.remove('active');
+    }
+}
+
+function navMore(tab) {
+    window._activeMoreTab = tab;
+    closeMore();
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    document.getElementById('NAV_MORE').classList.add('active');
+    document.querySelectorAll('.tab-section').forEach(s => s.classList.remove('active'));
+    const sec = document.getElementById('TAB_' + tab);
+    if (sec) sec.classList.add('active');
+    if (tab === 'SMARTHOME') mLoadSmartHome();
+    if (tab === 'SETTINGS') checkBioAvailability();
+    if (navigator.vibrate) navigator.vibrate(25);
+}
+
+// ════════════════════════════════════════════════════════
+// SERVER PING & STATS
+// ════════════════════════════════════════════════════════
+// ✅ FIX: Reconnect state tracking
+let _mReconnectTimer  = null;
+let _mReconnectDelay  = 2000;   // starts 2s, backs off to 30s max
+let _mIsOnline        = false;
+let _mStatsTimer      = null;
+
+function _mSetOnline() {
+    if (!_mIsOnline) {
+        _mIsOnline = true;
+        _mReconnectDelay = 2000;
+        if (!_mStatsTimer) {
+            _mStatsTimer = setInterval(fetchStats, 4000);
+        }
+        fetchStats();
+        showToast('✅ Server reconnected', false, false);
+    }
+    const dot = document.getElementById('STATUS_DOT');
+    const txt = document.getElementById('STATUS_TXT');
+    if (dot) dot.className = 'status-dot online';
+    if (txt) txt.textContent = 'ONLINE';
+}
+
+function _mSetOffline() {
+    if (_mIsOnline) {
+        _mIsOnline = false;
+        if (_mStatsTimer) { clearInterval(_mStatsTimer); _mStatsTimer = null; }
+        showToast('⚠ Server offline — retrying…', false, true);
+    }
+    const dot = document.getElementById('STATUS_DOT');
+    const txt = document.getElementById('STATUS_TXT');
+    const lbl = document.getElementById('CONN_STATUS_LBL');
+    if (dot) dot.className = 'status-dot offline';
+    if (txt) txt.textContent = 'OFFLINE';
+    if (lbl) lbl.textContent = 'Reconnecting…';
+    _mScheduleReconnect();
+}
+
+function _mScheduleReconnect() {
+    if (_mReconnectTimer) return;
+    _mReconnectTimer = setTimeout(async () => {
+        _mReconnectTimer = null;
+        try {
+            const r = await fetch(SERVER + '/api/ping', {signal: AbortSignal.timeout(3000)});
+            if (r.ok) { _mSetOnline(); return; }
+        } catch(e) {}
+        _mReconnectDelay = Math.min(_mReconnectDelay * 2, 30000);
+        _mSetOffline();
+    }, _mReconnectDelay);
+}
+
+async function pingServer() {
+    const lbl = document.getElementById('CONN_STATUS_LBL');
+    try {
+        const r = await fetch(SERVER + '/api/ping', {signal: AbortSignal.timeout(4000)});
+        const d = await r.json();
+        _mSetOnline();
+        if (lbl) lbl.textContent = `Connected • Uptime: ${Math.floor((d.uptime||0)/60)}m`;
+    } catch(e) {
+        _mSetOffline();
+    }
+}
+
+async function fetchStats() {
+    try {
+        const r = await fetch(SERVER + '/api/stats', {signal: AbortSignal.timeout(5000)});
+        const d = await r.json();
+        setBar('MCPU', 'MCPU_BAR', d.cpu, '%');
+        setBar('MRAM', 'MRAM_BAR', d.ram, '%');
+        setBar('MBAT', 'MBAT_BAR', d.battery, d.charging ? '% ⚡' : '%');
+        setBar('MDISK', 'MDISK_BAR', d.disk_pct, '%');
+        const nd = document.getElementById('MNET_D');
+        const nu = document.getElementById('MNET_U');
+        if (nd) nd.textContent = d.net_down + ' KB/s';
+        if (nu) nu.textContent = d.net_up + ' KB/s';
+        // Security stats
+        if (d.sec_stats) {
+            setEl('M_OK', d.sec_stats.ok);
+            setEl('M_BLK', d.sec_stats.blocked);
+            setEl('M_TOT', d.sec_stats.commands);
+            setEl('M_REM', d.sec_stats.remote);
+            const hasBlocked = d.sec_stats.blocked > 0;
+            const shield = document.getElementById('M_SHIELD');
+            const shieldState = document.getElementById('M_SHIELD_STATE');
+            if (shield) shield.className = 'shield-banner' + (hasBlocked ? ' alert' : '');
+            if (shieldState) { shieldState.textContent = hasBlocked ? 'THREATS DETECTED' : 'SYSTEM PROTECTED'; shieldState.className = 'shield-state-m' + (hasBlocked ? ' alert' : ''); }
+        }
+        // Alerts log
+        if (d.alerts && d.alerts.length) {
+            const log = document.getElementById('M_CMD_LOG');
+            if (log) {
+                d.alerts.slice(-8).forEach(a => {
+                    const line = document.createElement('div');
+                    const msg  = typeof a === 'string' ? a : a.msg;
+                    const ts   = typeof a === 'object' && a.ts ? a.ts : '';
+                    line.className = msg.includes('BLOCK') || msg.includes('🚨') ? 'log-err' : msg.includes('⚠️') ? 'log-warn' : 'log-ok';
+                    line.textContent = (ts ? '[' + ts + '] ' : '') + msg;
+                    log.appendChild(line);
+                });
+                log.scrollTop = log.scrollHeight;
+            }
+        }
+    } catch(e) {
+        _mSetOffline();   // ✅ trigger reconnect on fetchStats failure
+    }
+}
+
+function setBar(id, barId, val, suffix) {
+    const el  = document.getElementById(id);
+    const bar = document.getElementById(barId);
+    if (el) el.textContent = (val || 0) + (suffix || '');
+    if (bar) bar.style.width = Math.min(val || 0, 100) + '%';
+}
+function setEl(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+}
+
+// ════════════════════════════════════════════════════════
+// SYSTEM COMMANDS
+// ════════════════════════════════════════════════════════
+async function sysCmd(action) {
+    if (['shutdown','restart'].includes(action)) {
+        if (!confirm(`Are you sure you want to ${action} the PC?`)) return;
+    }
+    if (navigator.vibrate) navigator.vibrate(60);
+    try {
+        const r = await fetch(SERVER + '/api/system/' + action, {
+            method: 'POST', headers: headers(), body: '{}'
+        });
+        const d = await r.json();
+        showToast(d.result || action + ' sent');
+    } catch(e) { showToast('Server offline', true); }
+}
+
+async function mediaCmd(action) {
+    if (navigator.vibrate) navigator.vibrate(30);
+    try {
+        await fetch(SERVER + '/api/media/' + action, {method: 'POST', headers: headers(), body: '{}'});
+    } catch(e) {}
+}
+
+async function setVolume(val) {
+    document.getElementById('VOL_VAL').textContent = val;
+    try {
+        await fetch(SERVER + '/api/media/volume', {
+            method: 'POST', headers: headers(),
+            body: JSON.stringify({level: parseInt(val)})
+        });
+    } catch(e) {}
+}
+
+// ════════════════════════════════════════════════════════
+// WHATSAPP + SCREEN PEEK
+// ════════════════════════════════════════════════════════
+async function openWhatsApp() {
+    await sendToAgent('Open WhatsApp and check my messages. Tell me if there are any new messages visible on screen.');
+    nav('AGENT', document.querySelector('.nav-item'));
+}
+
+async function peekScreen() {
+    await sendToAgent('Describe what is currently on my screen. What applications are open? What can you see?');
+    nav('AGENT', document.querySelector('.nav-item'));
+}
+
+// ════════════════════════════════════════════════════════
+// AGENT
+// ════════════════════════════════════════════════════════
+let agentListening = false, agentRec = null;
+
+function toggleAgentVoice() {
+    if (agentListening) { stopAgentVoice(); return; }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { showToast('Voice not supported on this browser', true); return; }
+    agentRec = new SR();
+    agentRec.lang = 'en-US';
+    agentRec.continuous = false;
+    agentRec.interimResults = false;
+    agentRec.onstart = () => {
+        agentListening = true;
+        const m = document.getElementById('AGENT_MIC');
+        if (m) { m.classList.add('listening'); m.innerHTML = '🔴 <span>LISTENING...</span>'; }
+        if (navigator.vibrate) navigator.vibrate([50,30,50]);
+    };
+    agentRec.onresult = e => {
+        const txt = e.results[0][0].transcript;
+        stopAgentVoice();
+        sendToAgent(txt);
+    };
+    agentRec.onerror = () => { stopAgentVoice(); showToast('Mic error', true); };
+    agentRec.onend   = () => stopAgentVoice();
+    try { agentRec.start(); } catch(e) { stopAgentVoice(); }
+}
+
+function stopAgentVoice() {
+    agentListening = false;
+    const m = document.getElementById('AGENT_MIC');
+    if (m) { m.classList.remove('listening'); m.innerHTML = '🎤 <span>VOICE COMMAND</span>'; }
+    if (agentRec) try { agentRec.stop(); } catch(e) {}
+}
+
+function sendAgentText() {
+    const inp = document.getElementById('AGENT_INPUT');
+    const txt = inp.value.trim();
+    if (!txt) return;
+    inp.value = '';
+    sendToAgent(txt);
+}
+
+async function sendToAgent(text) {
+    const rep   = document.getElementById('AGENT_REPLY');
+    const tools = document.getElementById('AGENT_TOOLS');
+    if (rep) rep.innerHTML = '<div class="thinking-label"><span class="think-dot"></span><span class="think-dot"></span><span class="think-dot"></span><span style="margin-left:4px;">Thinking...</span></div>';
+    if (tools) tools.innerHTML = '';
+    try {
+        const r = await fetch(SERVER + '/api/agent', {
+            method: 'POST',
+            headers: headers(),
+            body: JSON.stringify({text, session_id: 'mobile'}),
+            signal: AbortSignal.timeout(45000)
+        });
+        const d = await r.json();
+        if (d.ok && rep) {
+            rep.textContent = d.reply;
+            // Show AI model used + tool chips
+            if (tools) {
+                let html = '';
+                if (d.model) html += '<span class="tool-chip" style="color:var(--g);">🤖 ' + d.model + '</span>';
+                if (d.steps && d.steps.length) {
+                    const ut = [...new Set(d.steps.map(s => s.tool))];
+                    html += ut.map(t => '<span class="tool-chip">⚡ ' + t + '</span>').join('');
+                }
+                tools.innerHTML = html;
+            }
+            if (window.speechSynthesis) {
+                window.speechSynthesis.cancel();
+                const u = new SpeechSynthesisUtterance(d.reply.substring(0, 250));
+                u.rate = 0.94; u.pitch = 0.82;
+                window.speechSynthesis.speak(u);
+            }
+        } else if (rep) {
+            rep.innerHTML = '<span style="color:var(--r)">⚠ ' + (d.error || d.reply || 'Unknown error') + '</span>';
+        }
+    } catch(e) {
+        if (rep) rep.innerHTML = '<span style="color:var(--r)">⚠ Connection error: ' + e.message + '</span>';
+    }
+}
+
+async function clearAgentHistory() {
+    try {
+        await fetch(SERVER + '/api/agent/clear', {
+            method: 'POST', headers: headers(),
+            body: JSON.stringify({session_id: 'mobile'})
+        });
+        const rep = document.getElementById('AGENT_REPLY');
+        if (rep) rep.textContent = 'Conversation cleared. Ready for new session, Sir.';
+        document.getElementById('AGENT_STEPS').textContent = '';
+        showToast('History cleared');
+    } catch(e) {}
+}
+
+// ════════════════════════════════════════════════════════
+// SECURITY
+// ════════════════════════════════════════════════════════
+async function mToggleSec(key, el) {
+    const isOn = !el.classList.contains('on');
+    el.classList.toggle('on');
+    try {
+        await fetch(SERVER + '/api/security/toggle', {
+            method: 'POST', headers: headers(),
+            body: JSON.stringify({key, state: isOn})
+        });
+        showToast(key + ': ' + (isOn ? 'ON' : 'OFF'));
+    } catch(e) {}
+}
+
+async function mToggleMotion(el) {
+    const isOn = !el.classList.contains('on');
+    el.classList.toggle('on');
+    try {
+        await fetch(SERVER + '/api/motion/config', {
+            method: 'POST', headers: headers(),
+            body: JSON.stringify({enabled: isOn})
+        });
+        showToast('Motion detection: ' + (isOn ? 'ON' : 'OFF'));
+    } catch(e) {}
+}
+
+async function mLoadSecStats() {
+    // Stats loaded via fetchStats()
+}
+
+// ════════════════════════════════════════════════════════
+// CAMERAS
+// ════════════════════════════════════════════════════════
+let mCameras = [], mCamIdC = 10;
+
+async function mLoadCameras() {
+    try {
+        const r = await fetch(SERVER + '/api/camera/list');
+        const d = await r.json();
+        if (d.cameras) { mCameras = d.cameras; mRenderCamCards(); }
+    } catch(e) {}
+}
+
+function mTypeLabel(t) {
+    return {webcam:'PC WEBCAM',phone:'PHONE CAM',ip:'IP STREAM',usb:'USB CAM'}[t]||t.toUpperCase();
+}
+
+function mRenderCamCards() {
+    const c = document.getElementById('M_CAM_CARDS');
+    if (!c) return;
+    c.innerHTML = mCameras.map(cam => {
+        const on = cam.active;
+        return `<div class="m-cam-card ${on?'active':''}" id="MCAMCARD_${cam.id}">
+          <div class="m-cam-feed">
+            <img id="MCAMFEED_${cam.id}" class="${on?'vis':''}" src="${on?SERVER+'/video_feed/'+cam.id+'?t='+Date.now():''}">
+            <div class="m-cam-offline" id="MCAMOFF_${cam.id}" style="${on?'display:none':''}">
+              <div class="m-cam-offline-ico">📷</div>
+              <div class="m-cam-offline-txt">OFFLINE</div>
+            </div>
+          </div>
+          <div class="m-cam-info">
+            <div><div class="m-cam-name">${cam.name}</div><div class="m-cam-type">${mTypeLabel(cam.type)}</div></div>
+            <div class="m-cam-dot ${on?'on':''}" id="MCAMDOT_${cam.id}"></div>
+          </div>
+          <div class="m-cam-btns">
+            <div class="m-cam-btn ${on?'on-btn':''}" id="MCAMBTN_${cam.id}" onclick="mToggleCam(${cam.id})">${on?'⏹ OFF':'▶ ON'}</div>
+            <div class="m-cam-btn" onclick="mFullCam(${cam.id})">⛶ FULL</div>
+            <div class="m-cam-btn del-btn" onclick="mDeleteCam(${cam.id})">🗑 DEL</div>
+          </div>
+        </div>`;
+    }).join('');
+    mUpdateCamBadge();
+}
+
+function mToggleCam(id) {
+    const cam = mCameras.find(c => c.id === id);
+    if (!cam) return;
+    cam.active = !cam.active;
+    if (navigator.vibrate) navigator.vibrate(35);
+    const card = document.getElementById('MCAMCARD_' + id);
+    const feed = document.getElementById('MCAMFEED_' + id);
+    const off  = document.getElementById('MCAMOFF_' + id);
+    const btn  = document.getElementById('MCAMBTN_' + id);
+    const dot  = document.getElementById('MCAMDOT_' + id);
+    if (cam.active) {
+        if (card) card.classList.add('active');
+        if (feed) { feed.src = SERVER + '/video_feed/' + id + '?t=' + Date.now(); feed.classList.add('vis'); }
+        if (off)  off.style.display = 'none';
+        if (btn)  { btn.textContent = '⏹ OFF'; btn.classList.add('on-btn'); }
+        if (dot)  dot.classList.add('on');
+        showToast(cam.name + ' — ON');
+    } else {
+        if (card) card.classList.remove('active');
+        if (feed) { feed.src = ''; feed.classList.remove('vis'); }
+        if (off)  off.style.display = 'flex';
+        if (btn)  { btn.textContent = '▶ ON'; btn.classList.remove('on-btn'); }
+        if (dot)  dot.classList.remove('on');
+        showToast(cam.name + ' — OFF', false, true);
+    }
+    mUpdateCamBadge();
+    fetch(SERVER + '/api/camera/toggle/' + id, {method:'POST', headers: headers()}).catch(()=>{});
+}
+
+function mToggleAllCams(state) { mCameras.forEach(c => { if (c.active !== state) mToggleCam(c.id); }); }
+function mFullCam(id) { const cam = mCameras.find(c => c.id === id); if (!cam||!cam.active) { showToast('Turn ON first', false, true); return; } window.open(SERVER+'/video_feed/'+id,'_blank'); }
+function mDeleteCam(id) { const cam = mCameras.find(c => c.id === id); if (!cam) return; if (cam.active) mToggleCam(id); mCameras = mCameras.filter(c => c.id !== id); mRenderCamCards(); showToast(cam.name+' removed', false, true); }
+function mUpdateCamBadge() { const on = mCameras.filter(c => c.active).length; const b = document.getElementById('M_CAM_ON'); if (b) b.textContent = on + ' ON'; }
+function mCamTypeChange() { const t = document.getElementById('M_CAM_TYPE').value; const ph = {webcam:'0',phone:'http://192.168.x.x:8080/video',ip:'http://IP:PORT/stream',usb:'1'}; document.getElementById('M_CAM_SRC').placeholder = ph[t]||'0'; document.getElementById('M_CAM_SRC').value = ''; }
+function mAddCamera() {
+    const name = document.getElementById('M_CAM_NAME').value.trim() || 'Camera ' + mCamIdC;
+    const type = document.getElementById('M_CAM_TYPE').value;
+    const src  = document.getElementById('M_CAM_SRC').value.trim() || '0';
+    const cam  = {id: mCamIdC++, name, type, src, active: false};
+    mCameras.push(cam);
+    document.getElementById('M_CAM_NAME').value = '';
+    document.getElementById('M_CAM_SRC').value  = '';
+    mRenderCamCards();
+    showToast(name + ' added');
+    fetch(SERVER + '/api/camera/add', {method:'POST', headers: headers(), body: JSON.stringify(cam)}).catch(()=>{});
+}
+
+// ════════════════════════════════════════════════════════
+// SMART HOME
+// ════════════════════════════════════════════════════════
+const SH_ICONS = {light:'💡',fan:'🌀',ac:'❄️',tv:'📺',plug:'🔌',lock:'🔒'};
+
+async function mLoadSmartHome() {
+    try {
+        const r = await fetch(SERVER + '/api/smarthome/devices');
+        const d = await r.json();
+        if (d.ok) mRenderSmartHome(d.devices || []);
+    } catch(e) {}
+}
+
+function mRenderSmartHome(devices) {
+    const c = document.getElementById('M_SH_DEVICES');
+    if (!c) return;
+    if (!devices.length) { c.innerHTML = '<div style="text-align:center;font-size:11px;color:var(--txd);padding:20px;">No devices configured.</div>'; return; }
+    c.innerHTML = devices.map(dev => `
+        <div class="sh-m-card ${dev.state?'on':''}" id="MSH_${dev.id}">
+          <div class="sh-m-left">
+            <div class="sh-m-ico">${SH_ICONS[dev.type]||'🔌'}</div>
+            <div><div class="sh-m-name">${dev.name}</div><div class="sh-m-type">${dev.type.toUpperCase()} · ${dev.state?'ON':'OFF'}</div></div>
+          </div>
+          <div class="sh-m-toggle ${dev.state?'on':''}" onclick="mShToggle('${dev.id}')"></div>
+        </div>`).join('');
+}
+
+async function mShToggle(id) {
+    if (navigator.vibrate) navigator.vibrate(45);
+    try {
+        const r = await fetch(SERVER + '/api/smarthome/toggle/' + id, {method:'POST', headers: headers(), body: '{}'});
+        const d = await r.json();
+        if (d.ok) { showToast(d.device.name + ' ' + (d.device.state?'ON':'OFF')); mLoadSmartHome(); }
+    } catch(e) { showToast('Server offline', true); }
+}
+
+async function mShAllOn()  { try { await fetch(SERVER+'/api/smarthome/all',{method:'POST',headers:headers(),body:JSON.stringify({state:true})}); showToast('All ON'); mLoadSmartHome(); } catch(e){} }
+async function mShAllOff() { try { await fetch(SERVER+'/api/smarthome/all',{method:'POST',headers:headers(),body:JSON.stringify({state:false})}); showToast('All OFF',false,true); mLoadSmartHome(); } catch(e){} }
+
+// ════════════════════════════════════════════════════════
+// SETTINGS UTILS
+// ════════════════════════════════════════════════════════
+function showToken() {
+    const token = API_TOKEN || localStorage.getItem('jarvis_token') || 'Not set yet';
+    alert('API Token:\n' + token + '\n\nInclude as X-JARVIS-Token header in API calls.');
+}
+
+function changeServer() {
+    const s = prompt('Enter JARVIS server URL:', SERVER);
+    if (s && s.trim()) {
+        SERVER = s.trim();
+        localStorage.setItem('jarvis_server', SERVER);
+        document.getElementById('SERVER_ADDR_LBL').textContent = SERVER;
+        pingServer();
+        showToast('Server updated');
+    }
+}
+
+// ════════════════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════════════════
+window.onload = () => {
+    checkBioAvailability();
+    // Auto-try biometric if enabled
+    if (bioEnabled && localStorage.getItem('jarvis_bio_pin')) {
+        setTimeout(tryBiometric, 800);
+    }
+};
+</script>
+</body>
+</html>

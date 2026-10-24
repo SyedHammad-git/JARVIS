@@ -1,0 +1,26 @@
+# ── Secrets (NEVER commit) ─────────────────────────────────────────
+.env
+
+# ── Python bytecode ────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ── Virtual environments ───────────────────────────────────────────
+venv/
+.venv/
+env/
+
+# ── IDE / OS files ─────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# ── Logs & local data ──────────────────────────────────────────────
+*.log
+jarvis.db
+JARVIS_Data/
