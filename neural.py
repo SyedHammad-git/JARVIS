@@ -21,7 +21,7 @@ from config import (
     heartbeat_cfg, heartbeat_queue, heartbeat_lock,
     work_session, work_session_lock,
 )
-from database import db_read, db_write, ts
+from database import db_read, db_write, db_write_many, ts
 from notifications import send_os_notification
 from ai_engine import groq_as_manager
 
@@ -180,6 +180,7 @@ def _reminder_scheduler():
                 (now_time,),
             )
 
+            updates = []
             for alarm in alarms:
                 alarm_id = alarm.get("id")
                 label    = alarm.get("label", "Reminder")
@@ -194,16 +195,19 @@ def _reminder_scheduler():
 
                 # ✅ BUG-R FIX: only deactivate one-time alarms
                 if repeat in ("once", ""):
-                    db_write(
+                    updates.append((
                         "UPDATE alarms SET active=0, status='triggered' WHERE id=?",
                         (alarm_id,),
-                    )
+                    ))
                 else:
                     # daily/weekly stay active — just mark triggered
-                    db_write(
+                    updates.append((
                         "UPDATE alarms SET status='triggered' WHERE id=?",
                         (alarm_id,),
-                    )
+                    ))
+
+            if updates:
+                db_write_many(updates)
 
         except Exception as e:
             log.error("reminder_scheduler: %s", e)

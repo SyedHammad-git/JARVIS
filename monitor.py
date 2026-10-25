@@ -18,7 +18,7 @@ from threading import Lock
 import psutil
 
 from config import CV2_OK, EXECUTION_MODE, REQUESTS_OK, _req, cache, stat_lock
-from database import db_read, db_write, ts, DATA_DIR
+from database import db_read, db_write, db_write_many, ts, DATA_DIR
 from auth import add_alert
 from notifications import send_discord_alert
 
@@ -279,15 +279,18 @@ def check_monitor(mon: dict):
             status  = "up" if r.status_code < 500 else "down"
             result_str = f"HTTP {r.status_code} in {elapsed}ms"
 
-            db_write(
-                "UPDATE monitors SET status=?,last_check=?,trigger_count=trigger_count+1 WHERE id=?",
-                (status, ts(), mon_id),
-            )
-            db_write(
-                "INSERT INTO monitor_log(monitor_id,monitor_name,result,alert_sent,created_at)"
-                " VALUES(?,?,?,?,?)",
-                (mon_id, name, result_str, 0 if status == "up" else 1, ts()),
-            )
+            now = ts()
+            db_write_many([
+                (
+                    "UPDATE monitors SET status=?,last_check=?,trigger_count=trigger_count+1 WHERE id=?",
+                    (status, now, mon_id),
+                ),
+                (
+                    "INSERT INTO monitor_log(monitor_id,monitor_name,result,alert_sent,created_at)"
+                    " VALUES(?,?,?,?,?)",
+                    (mon_id, name, result_str, 0 if status == "up" else 1, now),
+                ),
+            ])
 
             if status == "down":
                 add_alert(f"🔴 Monitor DOWN: {name} (HTTP {r.status_code})")
@@ -308,15 +311,18 @@ def check_monitor(mon: dict):
             status     = "up" if r2.returncode == 0 else "down"
             result_str = f"Ping {'OK' if status == 'up' else 'FAIL'} in {elapsed}ms"
 
-            db_write(
-                "UPDATE monitors SET status=?,last_check=? WHERE id=?",
-                (status, ts(), mon_id),
-            )
-            db_write(
-                "INSERT INTO monitor_log(monitor_id,monitor_name,result,alert_sent,created_at)"
-                " VALUES(?,?,?,?,?)",
-                (mon_id, name, result_str, 0 if status == "up" else 1, ts()),
-            )
+            now = ts()
+            db_write_many([
+                (
+                    "UPDATE monitors SET status=?,last_check=? WHERE id=?",
+                    (status, now, mon_id),
+                ),
+                (
+                    "INSERT INTO monitor_log(monitor_id,monitor_name,result,alert_sent,created_at)"
+                    " VALUES(?,?,?,?,?)",
+                    (mon_id, name, result_str, 0 if status == "up" else 1, now),
+                ),
+            ])
 
             if status == "down":
                 add_alert(f"🔴 Ping DOWN: {name}")

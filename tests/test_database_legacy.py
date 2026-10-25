@@ -71,3 +71,23 @@ def test_legacy_required_timestamp_is_filled(tmp_path, monkeypatch, table, legac
     assert rows[0]["timestamp"] == rows[0]["created_at"]
     assert rows[0]["legacy_text"] == ""
     assert rows[0]["legacy_count"] == 0
+
+
+def test_batched_sqlite_inserts_still_fill_legacy_required_columns(tmp_path, monkeypatch):
+    database_path = tmp_path / "batched-legacy.db"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "CREATE TABLE sample_log (id INTEGER PRIMARY KEY, message TEXT NOT NULL, "
+            "created_at TEXT NOT NULL, timestamp TEXT NOT NULL)"
+        )
+    monkeypatch.setattr(database, "DB_PATH", database_path)
+    monkeypatch.setattr(database, "DB_BACKEND", "sqlite")
+
+    assert database.db_write_many([
+        ("INSERT INTO sample_log(message,created_at) VALUES(?,?)", ("one", "2026-01-01 00:00:00")),
+        ("INSERT INTO sample_log(message,created_at) VALUES(?,?)", ("two", "2026-01-01 00:01:00")),
+    ])
+
+    rows = database.db_read("SELECT message,created_at,timestamp FROM sample_log ORDER BY id")
+    assert [row["message"] for row in rows] == ["one", "two"]
+    assert [row["timestamp"] for row in rows] == [row["created_at"] for row in rows]
