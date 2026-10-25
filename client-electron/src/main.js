@@ -9,7 +9,9 @@ const { createAudit } = require('./audit');
 const { createCamera } = require('./camera');
 const { createCommandHandler, createExecutor, HIGH_RISK_ACTIONS } = require('./executor');
 const { createRevocationMonitor, isRevokedConnectError, isUnauthorizedConnectError } = require('./revocation');
+const { loadPreferences, persistedPreferences } = require('./preferences');
 const { createStore, validateConfig } = require('./store');
+const { denyWindowPermissions } = require('./window-security');
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -20,7 +22,7 @@ const store = createStore({ app, safeStorage });
 const audit = createAudit({ app });
 const approval = createApproval({ dialog });
 const preferencesPath = path.join(app.getPath('userData'), 'preferences.json');
-let preferences = { remoteEnabled: true, cameraAllowed: false, startWithWindows: false };
+let preferences = loadPreferences();
 let tray;
 let pairingWindow;
 let statusWindow;
@@ -35,11 +37,7 @@ const revocationMonitor = createRevocationMonitor();
 
 try {
   const savedPreferences = JSON.parse(fs.readFileSync(preferencesPath, 'utf8'));
-  preferences = {
-    remoteEnabled: savedPreferences.remoteEnabled !== false,
-    cameraAllowed: savedPreferences.cameraAllowed === true,
-    startWithWindows: savedPreferences.startWithWindows === true,
-  };
+  preferences = loadPreferences(savedPreferences);
 } catch {
   // First run starts with remote control enabled and camera access disabled.
 }
@@ -55,7 +53,7 @@ const camera = createCamera({
 const executor = createExecutor({ shell, Notification, cameraSnapshot: (options) => camera.snapshot(options) });
 
 function savePreferences() {
-  fs.writeFileSync(preferencesPath, JSON.stringify(preferences), { encoding: 'utf8', mode: 0o600 });
+  fs.writeFileSync(preferencesPath, JSON.stringify(persistedPreferences(preferences)), { encoding: 'utf8', mode: 0o600 });
 }
 
 function setStatus(value) {
@@ -70,6 +68,7 @@ function setLastCommand(value) {
 }
 
 function protectWindow(window) {
+  denyWindowPermissions(window);
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
   window.webContents.on('will-attach-webview', (event) => event.preventDefault());

@@ -4,6 +4,8 @@ const { EventEmitter } = require('node:events');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { CAPTURE_CHANNEL, createCamera } = require('../../src/camera');
+const { denyWindowPermissions } = require('../../src/window-security');
+const { loadPreferences, persistedPreferences } = require('../../src/preferences');
 
 function cameraHarness({ allowed = true, now = () => 10_000 } = {}) {
   const ipcMain = new EventEmitter();
@@ -85,5 +87,39 @@ describe('camera snapshot guardrails', () => {
     instant += 1;
     await expect(harness.camera.snapshot()).resolves.toHaveProperty('mime', 'image/jpeg');
     expect(harness.calls.loaded).toBe(2);
+  });
+});
+
+describe('window permissions and camera preference persistence', () => {
+  test('pairing/status window permission requests and checks default to deny', () => {
+    let requestHandler;
+    let checkHandler;
+    const window = {
+      webContents: {
+        session: {
+          setPermissionRequestHandler: (handler) => { requestHandler = handler; },
+          setPermissionCheckHandler: (handler) => { checkHandler = handler; },
+        },
+      },
+    };
+    denyWindowPermissions(window);
+    for (const permission of ['media', 'notifications', 'clipboard-read']) {
+      let granted;
+      requestHandler({}, permission, (value) => { granted = value; });
+      expect(granted).toBe(false);
+    }
+    expect(checkHandler({}, 'media', 'file:///untrusted.html')).toBe(false);
+  });
+
+  test('camera permission always resets OFF and is omitted from preferences', () => {
+    expect(loadPreferences({ remoteEnabled: false, cameraAllowed: true, startWithWindows: true })).toEqual({
+      remoteEnabled: false,
+      cameraAllowed: false,
+      startWithWindows: true,
+    });
+    expect(persistedPreferences({ remoteEnabled: true, cameraAllowed: true, startWithWindows: false })).toEqual({
+      remoteEnabled: true,
+      startWithWindows: false,
+    });
   });
 });

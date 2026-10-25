@@ -9,7 +9,7 @@ import agent
 from tools.device_tools import tool_take_snapshot
 import config
 from vision import snapshots
-from vision.snapshots import MAX_IMAGE_BYTES, SnapshotRateLimiter, snapshot_ack_to_text
+from vision.snapshots import MAX_IMAGE_BYTES, SnapshotRateLimiter, cleanup_snapshots, snapshot_ack_to_text
 
 
 def test_oversized_snapshot_is_rejected_before_vision_or_storage(tmp_path, caplog):
@@ -85,6 +85,7 @@ def test_snapshot_sends_image_only_to_vision_and_keeps_it_out_of_history(tmp_pat
     assert image_b64 not in caplog.text
     assert image_b64 not in json.dumps(result)
     assert "Snapshot saved as img_" in result["steps"][0]["result"]
+    assert __import__("re").search(r"Snapshot saved as img_[A-Za-z0-9_-]+\.", result["steps"][0]["result"])
     assert "A desk is visible." in result["steps"][0]["result"]
     call_device.assert_called_once()
     assert call_device.call_args.kwargs["timeout"] == 20
@@ -108,3 +109,22 @@ def test_opencv_snapshot_helper_refuses_remote_mode(monkeypatch):
     monkeypatch.setattr(config, "EXECUTION_MODE", "remote")
     monkeypatch.setattr(config, "CV2_OK", True)
     assert tool_take_snapshot({}) == {"ok": False, "error": "camera_unavailable"}
+
+
+def test_snapshot_cleanup_removes_expired_files_only(tmp_path):
+    expired = tmp_path / "img_expired.jpg"
+    recent = tmp_path / "img_recent.jpg"
+    unrelated = tmp_path / "notes.txt"
+    for image in (expired, recent, unrelated):
+        image.write_bytes(b"x")
+    expired_time = 100
+    recent_time = 200
+    import os
+    os.utime(expired, (expired_time, expired_time))
+    os.utime(recent, (recent_time, recent_time))
+
+    cleanup_snapshots(tmp_path, now=recent_time + 24 * 60 * 60 - 1)
+
+    assert not expired.exists()
+    assert recent.exists()
+    assert unrelated.exists()

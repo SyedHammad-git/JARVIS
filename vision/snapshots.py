@@ -3,16 +3,33 @@ from __future__ import annotations
 
 import base64
 import binascii
+import secrets
 import threading
 import time
-import uuid
 from collections import deque
 from pathlib import Path
 
 from database import DATA_DIR
 
 MAX_IMAGE_BYTES = 1024 * 1024
+SNAPSHOT_TTL_SECONDS = 24 * 60 * 60
 SNAPSHOT_DIR = DATA_DIR / "snapshots"
+
+
+def cleanup_snapshots(image_dir: Path | None = None, now: float | None = None) -> None:
+    directory = Path(image_dir or SNAPSHOT_DIR)
+    if not directory.is_dir():
+        return
+    current_time = time.time() if now is None else now
+    try:
+        for image_path in directory.glob("img_*.jpg"):
+            if current_time - image_path.stat().st_mtime >= SNAPSHOT_TTL_SECONDS:
+                image_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+cleanup_snapshots()
 
 
 class SnapshotRateLimiter:
@@ -64,9 +81,10 @@ def snapshot_ack_to_text(ack: dict, question: str, image_dir: Path | None = None
     if not image_bytes.startswith(b"\xff\xd8\xff"):
         return "Camera snapshot rejected: invalid JPEG image."
 
-    snapshot_id = f"img_{uuid.uuid4().hex[:12]}"
+    snapshot_id = f"img_{secrets.token_urlsafe(9)}"
     directory = Path(image_dir or SNAPSHOT_DIR)
     try:
+        cleanup_snapshots(directory)
         directory.mkdir(parents=True, exist_ok=True)
         (directory / f"{snapshot_id}.jpg").write_bytes(image_bytes)
     except OSError:
