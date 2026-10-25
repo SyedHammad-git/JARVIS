@@ -286,8 +286,8 @@ def _sqlite_write(sql: str, params: tuple = ()) -> bool:
         conn = _sqlite_connect()
         try:
             insert = re.fullmatch(
-                r"\s*INSERT\s+INTO\s+(conversations|events)\s*\(([^)]*)\)\s*"
-                r"VALUES\s*\(([^)]*)\)\s*;?\s*",
+                r"\s*INSERT\s+(?:OR\s+(?:REPLACE|IGNORE)\s+)?INTO\s+"
+                r"([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*VALUES\s*\(([^)]*)\)\s*;?\s*",
                 sql,
                 flags=re.IGNORECASE | re.DOTALL,
             )
@@ -295,27 +295,60 @@ def _sqlite_write(sql: str, params: tuple = ()) -> bool:
                 table = insert.group(1).lower()
                 columns = [column.strip() for column in insert.group(2).split(",")]
                 values = [value.strip() for value in insert.group(3).split(",")]
-                if not any(column.strip('"`[]').lower() == "timestamp" for column in columns):
-                    legacy_timestamp = next(
-                        (column for column in conn.execute(f"PRAGMA table_info({table})")
-                         if column[1].lower() == "timestamp" and column[3] and column[4] is None),
+                provided = {
+                    column.strip('"`[]').lower(): index
+                    for index, column in enumerate(columns)
+                }
+                required = conn.execute(f"PRAGMA table_info({table})").fetchall()
+                extra_params = []
+                for column in required:
+                    name = column[1]
+                    normalized_name = name.lower()
+                    if (not column[3] or column[4] is not None or column[5]
+                            or normalized_name in provided):
+                        continue
+
+                    is_timestamp = any(
+                        marker in normalized_name
+                        for marker in ("timestamp", "created", "updated", "_at")
+                    )
+                    source_names = (
+                        (("updated_at", "created_at") if "updated" in normalized_name
+                         else ("created_at", "updated_at"))
+                        if is_timestamp
+                        else ()
+                    )
+                    source_index = next(
+                        (provided[source] for source in source_names if source in provided),
                         None,
                     )
-                    if legacy_timestamp:
-                        created_at_index = next(
-                            (index for index, column in enumerate(columns)
-                             if column.strip('"`[]').lower() == "created_at"),
-                            None,
-                        )
-                        timestamp_value = (
-                            params[created_at_index]
-                            if created_at_index is not None and created_at_index < len(params)
-                            else datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        )
-                        columns.append("timestamp")
-                        values.append("?")
-                        sql = f"INSERT INTO {table}({','.join(columns)}) VALUES({','.join(values)})"
-                        params = (*params, timestamp_value)
+                    source_param_index = (
+                        sum(value == "?" for value in values[:source_index])
+                        if source_index is not None
+                        else None
+                    )
+                    if source_param_index is not None and source_param_index < len(params):
+                        fallback = params[source_param_index]
+                    elif is_timestamp:
+                        fallback = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    elif "INT" in str(column[2]).upper():
+                        fallback = 0
+                    elif any(marker in str(column[2]).upper() for marker in ("REAL", "FLOA", "DOUB", "NUM")):
+                        fallback = 0
+                    elif "BLOB" in str(column[2]).upper():
+                        fallback = b""
+                    else:
+                        fallback = ""
+
+                    columns.append(name)
+                    values.append("?")
+                    extra_params.append(fallback)
+                    provided[normalized_name] = len(params) + len(extra_params) - 1
+
+                if extra_params:
+                    prefix = insert.group(0).split("(", 1)[0]
+                    sql = f"{prefix}({','.join(columns)}) VALUES({','.join(values)})"
+                    params = (*params, *extra_params)
             conn.execute(sql, params)
             conn.commit()
             return True

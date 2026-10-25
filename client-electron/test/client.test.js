@@ -10,7 +10,7 @@ const { APP_ALLOWLIST, createCommandHandler, createExecutor } = require('../src/
 const { createApproval } = require('../src/approval');
 const { createStore, validateConfig } = require('../src/store');
 const { createAudit } = require('../src/audit');
-const { createRevocationMonitor, isRevokedConnectError } = require('../src/revocation');
+const { createRevocationMonitor, isRevokedConnectError, isUnauthorizedConnectError } = require('../src/revocation');
 
 test('executor launches only allowlisted apps with shell disabled', async () => {
   const calls = [];
@@ -131,6 +131,8 @@ test('offline status keeps retrying, explicit revoked status stops the monitor',
     { execution_mode: 'remote', online: false, revoked: true },
   ];
   const socket = { connected: true };
+  let tokenPresent = true;
+  const authorizationStates = [];
   const monitor = createRevocationMonitor({
     fetchImpl: async (url) => {
       requestUrl = url.toString();
@@ -144,9 +146,13 @@ test('offline status keeps retrying, explicit revoked status stops the monitor',
     },
     clearTimer: () => {},
   });
-  monitor.start({ url: 'http://localhost:5000', deviceId: 'device-1' }, socket, () => {
-    revoked += 1;
-    socket.connected = false;
+  monitor.start({ url: 'http://localhost:5000', deviceId: 'device-1' }, socket, (state) => {
+    authorizationStates.push(state);
+    if (state === 'revoked') {
+      tokenPresent = false;
+      revoked += 1;
+      socket.connected = false;
+    }
   });
   await scheduled[0]();
   assert.match(requestUrl, /\/api\/device\/status\?device_id=device-1$/);
@@ -154,15 +160,36 @@ test('offline status keeps retrying, explicit revoked status stops the monitor',
   assert.equal(socket.connected, true);
   assert.equal(scheduledCount, 2);
   await scheduled[1]();
+  assert.deepEqual(authorizationStates, ['revoked']);
   assert.equal(revoked, 1);
+  assert.equal(tokenPresent, false);
   assert.equal(socket.connected, false);
   assert.equal(scheduledCount, 2);
 });
 
-test('revocation monitor treats HTTP authorization failures as revoked', async () => {
-  const monitor = createRevocationMonitor({ fetchImpl: async () => ({ status: 403, ok: false }) });
-  assert.equal(await monitor.check({ url: 'https://jarvis.example.com', deviceId: 'device-1' }), true);
+test('401 and 403 stop monitoring but retain credentials for manual retry', async () => {
+  for (const status of [401, 403]) {
+    const scheduled = [];
+    let state;
+    const monitor = createRevocationMonitor({
+      fetchImpl: async () => ({ status, ok: false }),
+      setTimer: (callback) => { scheduled.push(callback); return scheduled.length; },
+      clearTimer: () => {},
+    });
+    const credentials = { token: 'still-encrypted' };
+    monitor.start({ url: 'https://jarvis.example.com', deviceId: 'device-1' }, { connected: true }, (value) => {
+      state = value;
+      if (value === 'revoked') credentials.token = '';
+    });
+    await scheduled[0]();
+    assert.equal(state, 'reauthentication');
+    assert.equal(credentials.token, 'still-encrypted');
+    assert.equal(scheduled.length, 1);
+  }
+  assert.equal(isUnauthorizedConnectError({ status: 401 }), true);
+  assert.equal(isUnauthorizedConnectError({ data: { status: 403 } }), true);
   assert.equal(isRevokedConnectError({ data: { error: 'device_revoked' } }), true);
+  assert.equal(isRevokedConnectError({ message: 'device_revoked' }), false);
   assert.equal(isRevokedConnectError(new Error('temporary_network_error')), false);
 });
 
@@ -179,6 +206,21 @@ test('status endpoint outage keeps the revocation monitor retrying', async () =>
   });
   await scheduled[0]();
   assert.equal(revoked, false);
+  assert.equal(scheduled.length, 2);
+  monitor.stop();
+});
+
+test('status endpoint 5xx keeps the revocation monitor retrying', async () => {
+  const scheduled = [];
+  const monitor = createRevocationMonitor({
+    fetchImpl: async () => ({ status: 503, ok: false }),
+    setTimer: (callback) => { scheduled.push(callback); return scheduled.length; },
+    clearTimer: () => {},
+  });
+  monitor.start({ url: 'https://jarvis.example.com', deviceId: 'device-1' }, { connected: true }, () => {
+    assert.fail('5xx response must not signal revocation or re-authentication');
+  });
+  await scheduled[0]();
   assert.equal(scheduled.length, 2);
   monitor.stop();
 });

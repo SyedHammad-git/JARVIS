@@ -7,7 +7,7 @@ const { io } = require('socket.io-client');
 const { createApproval } = require('./approval');
 const { createAudit } = require('./audit');
 const { createCommandHandler, createExecutor, HIGH_RISK_ACTIONS } = require('./executor');
-const { createRevocationMonitor, isRevokedConnectError } = require('./revocation');
+const { createRevocationMonitor, isRevokedConnectError, isUnauthorizedConnectError } = require('./revocation');
 const { createStore, validateConfig } = require('./store');
 
 if (!app.requestSingleInstanceLock()) {
@@ -30,6 +30,7 @@ let lastCommand = 'None';
 let connectionState = 'Not connected';
 let quitting = false;
 let revoked = false;
+let reauthenticationNeeded = false;
 const revocationMonitor = createRevocationMonitor();
 
 try {
@@ -136,6 +137,7 @@ function rebuildTrayMenu() {
 
 async function connectDevice() {
   if (revoked) throw new Error('device_revoked');
+  reauthenticationNeeded = false;
   const config = store.load();
   if (!config) throw new Error('pairing_required');
   validateConfig(config);
@@ -163,11 +165,16 @@ async function connectDevice() {
   socket.on('connect', () => {
     revoked = false;
     setStatus('Connected');
-    revocationMonitor.start(config, socket, () => {
-      revoked = true;
-      store.clear();
+    revocationMonitor.start(config, socket, (state) => {
       socket.disconnect();
-      setStatus('Device revoked; reconnect disabled');
+      if (state === 'revoked') {
+        revoked = true;
+        store.clear();
+        setStatus('Device revoked; reconnect disabled');
+      } else {
+        reauthenticationNeeded = true;
+        setStatus('Re-authentication needed');
+      }
     });
   });
   socket.on('connect_error', (error) => {
@@ -179,18 +186,29 @@ async function connectDevice() {
       setStatus('Device revoked; reconnect disabled');
       return;
     }
+    if (isUnauthorizedConnectError(error)) {
+      reauthenticationNeeded = true;
+      revocationMonitor.stop();
+      socket.disconnect();
+      setStatus('Re-authentication needed');
+      return;
+    }
     setStatus('Connection rejected or unavailable; retrying');
   });
   socket.on('disconnect', (reason) => {
-    if (revoked) return;
+    if (revoked || reauthenticationNeeded) return;
     if (reason === 'io server disconnect') {
       setStatus('Disconnected by server; checking authorization');
-      revocationMonitor.check(config).then((isRevoked) => {
-        if (isRevoked) {
+      revocationMonitor.check(config).then((state) => {
+        if (state === 'revoked') {
           revoked = true;
           revocationMonitor.stop();
           store.clear();
           setStatus('Device revoked; reconnect disabled');
+        } else if (state === 'reauthentication') {
+          reauthenticationNeeded = true;
+          revocationMonitor.stop();
+          setStatus('Re-authentication needed');
         } else if (!revoked) {
           setStatus('Disconnected; retrying');
           socket.connect();

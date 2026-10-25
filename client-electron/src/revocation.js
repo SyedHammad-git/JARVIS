@@ -15,7 +15,7 @@ function createRevocationMonitor({
     clearTimer(timer);
   }
 
-  function start(config, socket, onRevoked) {
+  function start(config, socket, onAuthorizationState) {
     stop();
     stopped = false;
 
@@ -23,9 +23,10 @@ function createRevocationMonitor({
       clearTimer(timer);
       timer = setTimer(async () => {
         if (stopped) return;
-        if (await check(config)) {
+        const state = await check(config);
+        if (state) {
           stop();
-          onRevoked();
+          onAuthorizationState(state);
           return;
         }
         if (!stopped) schedule();
@@ -41,12 +42,12 @@ function createRevocationMonitor({
       const statusUrl = new URL('/api/device/status', config.url);
       statusUrl.searchParams.set('device_id', config.deviceId);
       const response = await fetchImpl(statusUrl, { signal: AbortSignal.timeout(requestTimeoutMs) });
-      if (response.status === 401 || response.status === 403) return true;
-      if (!response.ok) return false;
+      if (response.status === 401 || response.status === 403) return 'reauthentication';
+      if (!response.ok) return null;
       const status = await response.json();
-      return status.revoked === true || status.error === 'device_revoked';
+      return status.revoked === true ? 'revoked' : null;
     } catch {
-      return false;
+      return null;
     }
   }
 
@@ -54,9 +55,13 @@ function createRevocationMonitor({
 }
 
 function isRevokedConnectError(error) {
-  return error?.message === 'device_revoked'
-    || error?.data?.error === 'device_revoked'
+  return error?.data?.error === 'device_revoked'
     || error?.data === 'device_revoked';
 }
 
-module.exports = { createRevocationMonitor, isRevokedConnectError };
+function isUnauthorizedConnectError(error) {
+  const status = error?.status ?? error?.data?.status ?? error?.context?.status;
+  return status === 401 || status === 403;
+}
+
+module.exports = { createRevocationMonitor, isRevokedConnectError, isUnauthorizedConnectError };
