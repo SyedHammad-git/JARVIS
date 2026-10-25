@@ -1,7 +1,9 @@
 """Registry: device tools hidden when the device is offline."""
 import unittest
+import re
 
 import app.tools as tools  # noqa: F401 — registers server + device tools
+from app.ai.engine import AGENT_SYS_BASE
 from app.tools.registry import llm_schemas, REGISTRY
 
 
@@ -37,6 +39,11 @@ class RegistrySchemaTests(unittest.TestCase):
         enum = schema["function"]["parameters"]["properties"]["target"]["enum"]
         self.assertIn("notepad", enum)
         self.assertNotIn("regedit", enum)
+
+    def test_system_prompt_names_only_registered_tools(self):
+        section = AGENT_SYS_BASE.split("TOOLS:", 1)[1].split("\nUse only tools", 1)[0]
+        prompt_names = set(re.findall(r"[a-z][a-z0-9_]*", section))
+        self.assertEqual(prompt_names, set(REGISTRY))
 
 
 if __name__ == "__main__":

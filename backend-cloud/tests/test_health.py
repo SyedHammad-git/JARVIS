@@ -33,6 +33,10 @@ def test_health_reports_neon_latency_vector_count_and_online_devices(monkeypatch
         "app.devices.gateway.is_online",
         lambda device_id: device_id == "dev-online",
     )
+    monkeypatch.setattr(
+        "app.devices.gateway.online_device_ids",
+        lambda: ["dev-online"],
+    )
     _invalidate_health_cache()
 
     client = _health_client()

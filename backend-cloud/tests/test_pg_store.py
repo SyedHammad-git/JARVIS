@@ -43,11 +43,11 @@ def test_add_memory_writes_json_and_vector_only_in_postgres(monkeypatch):
     monkeypatch.setattr(pg_store, "embed_text", lambda _text: vector)
     monkeypatch.setattr(pg_store, "db_write", write)
 
-    assert pg_store.add_memory("fact-7", "fact text", {"category": "general"})
+    assert pg_store.add_memory("fact-7", "fact text", {"category": "general"}, "owner-a")
     sql, params = write.call_args.args
     assert "INSERT INTO memory_vectors" in sql
-    assert params[0:3] == ("fact-7", "fact text", json.dumps({"category": "general"}))
-    assert params[3].startswith("[") and params[3].endswith("]")
+    assert params[0:4] == ("fact-7", "owner-a", "fact text", json.dumps({"category": "general"}))
+    assert params[4].startswith("[") and params[4].endswith("]")
 
 
 def test_search_returns_empty_when_embeddings_unavailable(monkeypatch):
@@ -72,8 +72,27 @@ def test_search_maps_pgvector_results(monkeypatch):
     }]
 
 
+def test_pgvector_similarity_query_filters_owner_before_ranking(monkeypatch):
+    queries = []
+    monkeypatch.setattr(pg_store, "DB_BACKEND", "postgres")
+    monkeypatch.setattr(pg_store, "embed_text", lambda _text: [0.5] * 768)
+    monkeypatch.setattr(
+        pg_store, "db_read",
+        lambda sql, params: queries.append((sql, params)) or [{
+            "id": "fact-a", "content": "owner a", "meta": {}, "distance": 0.1,
+        }],
+    )
+
+    hits = pg_store.search("desk", owner_username="owner-a")
+
+    assert hits[0]["id"] == "fact-a"
+    sql, params = queries[0]
+    assert "WHERE owner_username=?" in sql
+    assert params[1] == "owner-a"
+
+
 def test_memory_keeps_keyword_fallback_when_pgvector_returns_no_hits(monkeypatch):
-    monkeypatch.setattr(memory, "search_vectors", lambda _query, top_k=5: [])
+    monkeypatch.setattr(memory, "search_vectors", lambda _query, top_k=5, owner_username="": [])
     monkeypatch.setattr(memory, "db_read", lambda _sql, params: [{"fact": "desk fact", "category": "general"}])
 
     assert memory.search_facts_semantic("desk") == [
@@ -84,7 +103,8 @@ def test_memory_keeps_keyword_fallback_when_pgvector_returns_no_hits(monkeypatch
 def test_backfill_uses_postgres_fact_rows_and_pg_store(monkeypatch, capsys):
     writes = []
     fake_database = SimpleNamespace(DB_BACKEND="postgres", db_read=lambda _sql, _params: [{
-        "id": 9, "fact": "fact text", "category": "general", "source": "manual",
+        "id": 9, "owner_username": "owner-a", "fact": "fact text",
+        "category": "general", "source": "manual",
     }])
     monkeypatch.setenv("DATABASE_URL_DIRECT", "postgresql://direct@ep-dev.neon.tech/app")
     monkeypatch.setenv("DATABASE_URL", "postgresql://pooler@ep-prod-pooler.neon.tech/app")
@@ -93,5 +113,5 @@ def test_backfill_uses_postgres_fact_rows_and_pg_store(monkeypatch, capsys):
 
     assert backfill_vectors.main(["--limit", "2"]) == 0
     assert "ep-dev.neon.tech" in __import__("os").environ["DATABASE_URL"]
-    assert writes == [("9", "fact text", {"category": "general", "source": "manual"})]
+    assert writes == [("9", "fact text", {"category": "general", "source": "manual"}, "owner-a")]
     assert "indexed=1" in capsys.readouterr().out

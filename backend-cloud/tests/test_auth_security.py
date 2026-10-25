@@ -17,7 +17,7 @@ from app.security import (
     validate_production_config,
 )
 
-PUBLIC_API = {"/api/ping", "/api/health", "/api/auth/login"}
+PUBLIC_API = {"/api/ping", "/api/health", "/api/auth/login", "/api/webhooks/clerk"}
 
 
 def _rule_path(app, rule, method):

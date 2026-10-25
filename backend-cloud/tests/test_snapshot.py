@@ -95,7 +95,7 @@ def test_snapshot_sends_image_only_to_vision_and_keeps_it_out_of_history(tmp_pat
     call_device.assert_called_once()
     assert call_device.call_args.kwargs["timeout"] == 20
     assert call_vision.call_args.kwargs["image_base64"] == image_b64
-    stored_images = list(tmp_path.glob("img_*.jpg"))
+    stored_images = list(tmp_path.rglob("img_*.jpg"))
     assert len(stored_images) == 1
     assert stored_images[0].read_bytes() == image_bytes
 
@@ -145,7 +145,10 @@ def test_neon_snapshot_storage_uses_bytea_expiry_and_db_cleanup(monkeypatch):
     image = b"\xff\xd8\xffsnapshot"
 
     assert save_snapshot("img_test", image, backend="postgres")
-    assert writes[0][0] == "DELETE FROM snapshots WHERE expires_at <= ?"
-    assert writes[1][0] == "INSERT INTO snapshots(snapshot_id,image,expires_at) VALUES(?,?,?)"
-    assert writes[1][1][0:2] == ("img_test", image)
-    assert writes[1][1][2].tzinfo is not None
+    assert writes[0][0] == "DELETE FROM snapshots WHERE owner_username=? AND expires_at <= ?"
+    assert writes[0][1][0] == ""
+    assert writes[1][0] == (
+        "INSERT INTO snapshots(snapshot_id,owner_username,image,expires_at) VALUES(?,?,?,?)"
+    )
+    assert writes[1][1][0:3] == ("img_test", "", image)
+    assert writes[1][1][3].tzinfo is not None

@@ -22,8 +22,10 @@ def test_periodic_threads_use_warm_caches_without_idle_database_calls(monkeypatc
 
     neural.invalidate_alarm_cache()
     monitor.invalidate_monitor_cache()
-    neural.refresh_alarm_cache(force=True)
-    monitor.refresh_monitor_cache(force=True)
+    neural.refresh_alarm_owners(force=True)
+    monitor.refresh_monitor_owners(force=True)
+    neural.refresh_all_alarm_caches(force=True)
+    monitor.refresh_all_monitor_caches(force=True)
     calls.clear()
     monkeypatch.setattr(neural, "heartbeat_cfg", {**neural.heartbeat_cfg, "enabled": False})
 
@@ -65,21 +67,27 @@ def test_alarm_creation_invalidates_cache_and_new_alarm_is_loaded(monkeypatch):
     def insert_alarm(_sql, params=()):
         alarm_rows.append({
             "id": 45,
-            "time": params[0],
-            "label": params[1],
-            "repeat": params[2],
+            "owner_username": params[0],
+            "time": params[1],
+            "label": params[2],
+            "repeat": params[3],
             "active": 1,
-            "status": params[4],
+            "status": params[5],
         })
         return True
 
     monkeypatch.setattr(data_routes, "db_write", insert_alarm)
-    monkeypatch.setattr(data_routes, "add_alert", lambda _message: None)
+    monkeypatch.setattr(data_routes, "add_alert", lambda _message, **_kwargs: None)
+
+    @flask_app.before_request
+    def authenticate_alarm_owner():
+        g.current_user = {"username": "owner-a"}
+
     response = flask_app.test_client().post(
         "/api/alarms", json={"time": "08:30", "label": "Wake"},
     )
     assert response.status_code == 200
-    assert neural.refresh_alarm_cache() == alarm_rows
+    assert neural.refresh_alarm_cache("owner-a") == alarm_rows
     assert len(reads) == initial_reads + 1
 
 
@@ -166,7 +174,7 @@ def test_monitor_cache_refreshes_after_invalidation(monkeypatch):
     monkeypatch.setattr(
         monitor,
         "db_read",
-        lambda _sql: reads.append(True) or [dict(row) for row in rows],
+        lambda _sql, _params=(): reads.append(True) or [dict(row) for row in rows],
     )
     monitor.invalidate_monitor_cache()
     assert monitor.get_monitor_cache()[0]["name"] == "first"
