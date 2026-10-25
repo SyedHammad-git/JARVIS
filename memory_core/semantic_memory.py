@@ -1,8 +1,4 @@
-"""
-J.A.R.V.I.S v18 — Semantic Memory (STUB)
-Factual knowledge base (wraps existing memory_facts table).
-v18 will add vector embeddings via ChromaDB.
-"""
+"""J.A.R.V.I.S semantic-memory facade (legacy stub)."""
 
 class SemanticMemory:
     def lookup(self, concept: str) -> list:

@@ -60,7 +60,7 @@ JARVIS_v17M/
 ├── memory_core/           ← v18 stub — WorkingMemory, EpisodicMemory
 ├── planning/              ← v18 stub — Planner
 ├── learning/              ← v18 stub — Reflection
-├── vector/                ← v18 stub — ChromaDB client
+├── vector/                ← Neon pgvector store with keyword fallback
 ├── JARVIS.html            ← Desktop UI
 └── mobile.html            ← Mobile UI
 ```
@@ -82,6 +82,8 @@ DATABASE_URL_DIRECT=postgresql://user:password@ep-example.region.aws.neon.tech/d
 The app uses `DATABASE_URL` and requires `sslmode=require`. Run
 `py tools_dev/migrate_neon.py` with `DATABASE_URL_DIRECT` set to the Neon dev
 branch when applying schema changes. SQLite remains the local fallback.
+ChromaDB has been removed; Neon uses pgvector for semantic memory, with SQL
+keyword search retained whenever embeddings or pgvector are unavailable.
 
 ---
 

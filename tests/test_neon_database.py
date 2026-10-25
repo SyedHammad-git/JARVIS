@@ -50,6 +50,9 @@ def test_converted_schema_contains_devices_once_and_postgres_types():
     assert "CREATE TABLE IF NOT EXISTS devices" not in database._POSTGRES_SNAPSHOT_SCHEMA
     assert "image BYTEA NOT NULL" in database._POSTGRES_SNAPSHOT_SCHEMA
     assert "expires_at TIMESTAMPTZ NOT NULL" in database._POSTGRES_SNAPSHOT_SCHEMA
+    assert "CREATE EXTENSION IF NOT EXISTS vector" in database._POSTGRES_VECTOR_SCHEMA
+    assert "embedding vector(768)" in database._POSTGRES_VECTOR_SCHEMA
+    assert "USING hnsw (embedding vector_cosine_ops)" in database._POSTGRES_VECTOR_SCHEMA
 
 
 def test_neon_cold_start_retries_fail_fail_success(monkeypatch):
@@ -83,6 +86,38 @@ def test_retry_exhaustion_hides_driver_exception_details(monkeypatch):
     assert "do-not-leak" not in str(raised.value)
 
 
+def test_postgres_startup_fallback_is_loud_and_starts_recovery_monitor(monkeypatch, caplog):
+    monitor = Mock()
+    monkeypatch.setattr(database, "DB_BACKEND", "postgres")
+    monkeypatch.setattr(database, "SQLITE_FALLBACK_ACTIVE", False)
+    monkeypatch.setattr(database, "_postgres_init", Mock(side_effect=database.PostgresUnavailableError()))
+    monkeypatch.setattr(database, "_sqlite_init", Mock())
+    monkeypatch.setattr(database, "_start_postgres_recovery_monitor", monitor)
+
+    with caplog.at_level("ERROR", logger="jarvis.db"):
+        database.init_db()
+
+    assert database.DB_BACKEND == "sqlite"
+    assert database.SQLITE_FALLBACK_ACTIVE
+    assert "PostgreSQL unavailable" in caplog.text
+    database._sqlite_init.assert_called_once()
+    monitor.assert_called_once()
+
+
+def test_recovery_worker_checks_every_five_minutes_and_only_logs_success(monkeypatch, caplog):
+    probes = iter((False, False, True))
+    sleeps = []
+    monkeypatch.setattr(database, "_probe_postgres", lambda: next(probes))
+    monkeypatch.setattr(database.time, "sleep", sleeps.append)
+
+    with caplog.at_level("ERROR", logger="jarvis.db"):
+        database._postgres_recovery_worker()
+
+    assert sleeps == [300, 300, 300]
+    assert caplog.text.count("Neon is reachable again") == 1
+    assert "unavailable" not in caplog.text
+
+
 def test_postgres_dispatch_does_not_run_sqlite_legacy_adapter(monkeypatch):
     postgres_write = Mock(return_value=True)
     sqlite_write = Mock(side_effect=AssertionError("SQLite adapter must not run"))
@@ -93,3 +128,15 @@ def test_postgres_dispatch_does_not_run_sqlite_legacy_adapter(monkeypatch):
     assert database.db_write("INSERT INTO snapshots(snapshot_id,image,expires_at) VALUES(?,?,?)", ("id", b"x", "expiry"))
     postgres_write.assert_called_once()
     sqlite_write.assert_not_called()
+
+
+def test_postgres_batch_dispatch_does_not_run_sqlite_legacy_adapter(monkeypatch):
+    postgres_write_many = Mock(return_value=True)
+    sqlite_write_many = Mock(side_effect=AssertionError("SQLite adapter must not run"))
+    monkeypatch.setattr(database, "DB_BACKEND", "postgres")
+    monkeypatch.setattr(database, "_postgres_write_many", postgres_write_many)
+    monkeypatch.setattr(database, "_sqlite_write_many", sqlite_write_many)
+
+    assert database.db_write_many([("UPDATE monitors SET status=? WHERE id=?", ("up", 1))])
+    postgres_write_many.assert_called_once()
+    sqlite_write_many.assert_not_called()
