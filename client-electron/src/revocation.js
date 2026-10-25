@@ -22,23 +22,13 @@ function createRevocationMonitor({
     const schedule = () => {
       clearTimer(timer);
       timer = setTimer(async () => {
-        if (stopped || !socket.connected) return;
-        try {
-          const statusUrl = new URL('/api/device/status', config.url);
-          statusUrl.searchParams.set('device_id', config.deviceId);
-          const response = await fetchImpl(statusUrl, { signal: AbortSignal.timeout(requestTimeoutMs) });
-          if (response.ok) {
-            const status = await response.json();
-            if (status.execution_mode === 'remote' && status.online === false) {
-              stop();
-              onRevoked();
-              return;
-            }
-          }
-        } catch {
-          // Network failure is not proof of revocation; Socket.IO manages reconnects.
+        if (stopped) return;
+        if (await check(config)) {
+          stop();
+          onRevoked();
+          return;
         }
-        if (!stopped && socket.connected) schedule();
+        if (!stopped) schedule();
       }, intervalMs);
     };
 
@@ -46,7 +36,27 @@ function createRevocationMonitor({
     return stop;
   }
 
-  return { start, stop };
+  async function check(config) {
+    try {
+      const statusUrl = new URL('/api/device/status', config.url);
+      statusUrl.searchParams.set('device_id', config.deviceId);
+      const response = await fetchImpl(statusUrl, { signal: AbortSignal.timeout(requestTimeoutMs) });
+      if (response.status === 401 || response.status === 403) return true;
+      if (!response.ok) return false;
+      const status = await response.json();
+      return status.revoked === true || status.error === 'device_revoked';
+    } catch {
+      return false;
+    }
+  }
+
+  return { check, start, stop };
 }
 
-module.exports = { createRevocationMonitor };
+function isRevokedConnectError(error) {
+  return error?.message === 'device_revoked'
+    || error?.data?.error === 'device_revoked'
+    || error?.data === 'device_revoked';
+}
+
+module.exports = { createRevocationMonitor, isRevokedConnectError };

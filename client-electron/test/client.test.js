@@ -10,7 +10,7 @@ const { APP_ALLOWLIST, createCommandHandler, createExecutor } = require('../src/
 const { createApproval } = require('../src/approval');
 const { createStore, validateConfig } = require('../src/store');
 const { createAudit } = require('../src/audit');
-const { createRevocationMonitor } = require('../src/revocation');
+const { createRevocationMonitor, isRevokedConnectError } = require('../src/revocation');
 
 test('executor launches only allowlisted apps with shell disabled', async () => {
   const calls = [];
@@ -112,6 +112,8 @@ test('credential store encrypts persisted data and audit omits token fields', ()
     const line = fs.readFileSync(audit.filePath, 'utf8');
     assert.equal(line.includes(credentials.token), false);
     assert.equal(line.includes('"token"'), false);
+    store.clear();
+    assert.equal(store.load(), null);
   } finally {
     if (previousDevMode === undefined) delete process.env.JARVIS_DEV;
     else process.env.JARVIS_DEV = previousDevMode;
@@ -119,20 +121,24 @@ test('credential store encrypts persisted data and audit omits token fields', ()
   }
 });
 
-test('revocation monitor disconnects when backend reports device offline', async () => {
-  let scheduled;
+test('offline status keeps retrying, explicit revoked status stops the monitor', async () => {
+  const scheduled = [];
   let scheduledCount = 0;
   let revoked = 0;
   let requestUrl;
+  const responses = [
+    { execution_mode: 'remote', online: false, revoked: false },
+    { execution_mode: 'remote', online: false, revoked: true },
+  ];
   const socket = { connected: true };
   const monitor = createRevocationMonitor({
     fetchImpl: async (url) => {
       requestUrl = url.toString();
-      return { ok: true, json: async () => ({ execution_mode: 'remote', online: false }) };
+      return { ok: true, status: 200, json: async () => responses.shift() };
     },
     setTimer: (callback, delay) => {
       assert.equal(delay, 15_000);
-      scheduled = callback;
+      scheduled.push(callback);
       scheduledCount += 1;
       return scheduledCount;
     },
@@ -142,11 +148,39 @@ test('revocation monitor disconnects when backend reports device offline', async
     revoked += 1;
     socket.connected = false;
   });
-  await scheduled();
+  await scheduled[0]();
   assert.match(requestUrl, /\/api\/device\/status\?device_id=device-1$/);
+  assert.equal(revoked, 0);
+  assert.equal(socket.connected, true);
+  assert.equal(scheduledCount, 2);
+  await scheduled[1]();
   assert.equal(revoked, 1);
   assert.equal(socket.connected, false);
-  assert.equal(scheduledCount, 1);
+  assert.equal(scheduledCount, 2);
+});
+
+test('revocation monitor treats HTTP authorization failures as revoked', async () => {
+  const monitor = createRevocationMonitor({ fetchImpl: async () => ({ status: 403, ok: false }) });
+  assert.equal(await monitor.check({ url: 'https://jarvis.example.com', deviceId: 'device-1' }), true);
+  assert.equal(isRevokedConnectError({ data: { error: 'device_revoked' } }), true);
+  assert.equal(isRevokedConnectError(new Error('temporary_network_error')), false);
+});
+
+test('status endpoint outage keeps the revocation monitor retrying', async () => {
+  const scheduled = [];
+  let revoked = false;
+  const monitor = createRevocationMonitor({
+    fetchImpl: async () => { throw new Error('backend_unavailable'); },
+    setTimer: (callback) => { scheduled.push(callback); return scheduled.length; },
+    clearTimer: () => {},
+  });
+  monitor.start({ url: 'https://jarvis.example.com', deviceId: 'device-1' }, { connected: false }, () => {
+    revoked = true;
+  });
+  await scheduled[0]();
+  assert.equal(revoked, false);
+  assert.equal(scheduled.length, 2);
+  monitor.stop();
 });
 
 test('approval only prompts for high-risk actions and times out as deny', async () => {

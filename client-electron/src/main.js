@@ -7,7 +7,7 @@ const { io } = require('socket.io-client');
 const { createApproval } = require('./approval');
 const { createAudit } = require('./audit');
 const { createCommandHandler, createExecutor, HIGH_RISK_ACTIONS } = require('./executor');
-const { createRevocationMonitor } = require('./revocation');
+const { createRevocationMonitor, isRevokedConnectError } = require('./revocation');
 const { createStore, validateConfig } = require('./store');
 
 if (!app.requestSingleInstanceLock()) {
@@ -165,17 +165,37 @@ async function connectDevice() {
     setStatus('Connected');
     revocationMonitor.start(config, socket, () => {
       revoked = true;
+      store.clear();
       socket.disconnect();
-      setStatus('Device revoked or offline; reconnect disabled');
+      setStatus('Device revoked; reconnect disabled');
     });
   });
-  socket.on('connect_error', () => setStatus('Connection rejected or unavailable'));
+  socket.on('connect_error', (error) => {
+    if (isRevokedConnectError(error)) {
+      revoked = true;
+      revocationMonitor.stop();
+      store.clear();
+      socket.disconnect();
+      setStatus('Device revoked; reconnect disabled');
+      return;
+    }
+    setStatus('Connection rejected or unavailable; retrying');
+  });
   socket.on('disconnect', (reason) => {
-    revocationMonitor.stop();
     if (revoked) return;
     if (reason === 'io server disconnect') {
-      revoked = true;
-      setStatus('Disconnected by server; reconnect disabled');
+      setStatus('Disconnected by server; checking authorization');
+      revocationMonitor.check(config).then((isRevoked) => {
+        if (isRevoked) {
+          revoked = true;
+          revocationMonitor.stop();
+          store.clear();
+          setStatus('Device revoked; reconnect disabled');
+        } else if (!revoked) {
+          setStatus('Disconnected; retrying');
+          socket.connect();
+        }
+      });
       return;
     }
     setStatus('Disconnected; retrying');

@@ -8,7 +8,7 @@ from flask import Blueprint, jsonify, request, session
 from auth import verify_pin
 from config import DEVICE_ID, EXECUTION_MODE
 from devices.gateway import is_online
-from devices.pairing import issue_device, list_devices, revoke_device
+from devices.pairing import get_device, issue_device, list_devices, revoke_device
 from error_utils import api_errors
 
 log = logging.getLogger("jarvis.devices")
@@ -89,6 +89,7 @@ def devices_revoke(device_id):
 @api_errors
 def device_status():
     device_id = (request.args.get("device_id") or DEVICE_ID or "").strip()
+    device = get_device(device_id)
     online = is_online(device_id) if EXECUTION_MODE == "remote" else True
     if EXECUTION_MODE == "local":
         label = "local"
@@ -99,5 +100,6 @@ def device_status():
         "device_id": device_id,
         "execution_mode": EXECUTION_MODE,
         "online": bool(online),
+        "revoked": bool(device and int(device.get("revoked") or 0)),
         "label": label,
     })

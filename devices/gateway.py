@@ -7,10 +7,10 @@ from threading import Lock
 
 from flask import request
 from flask_socketio import Namespace, disconnect
-from socketio.exceptions import TimeoutError as SocketIOTimeout
+from socketio.exceptions import ConnectionRefusedError, TimeoutError as SocketIOTimeout
 
 from auth import add_alert
-from devices.pairing import touch_last_seen, validate_device_token
+from devices.pairing import get_device, touch_last_seen, validate_device_token
 from extensions import socketio
 from notifications import send_discord_alert
 
@@ -42,13 +42,18 @@ def disconnect_device(device_id: str) -> None:
             _device_by_sid.pop(sid, None)
     if sid:
         try:
-            socketio.disconnect(sid, namespace="/device")
+            socketio.server.disconnect(sid, namespace="/device")
         except Exception as exc:
             log.info("disconnect_device: %s", exc)
 
 
 def call_device(device_id: str, action: str, args: dict | None = None, timeout: int = CALL_TIMEOUT) -> dict:
     """Send command to the paired device; wait for ack. Never raises to the agent."""
+    device = get_device(device_id)
+    if not device:
+        return {"ok": False, "error": "device_offline"}
+    if int(device.get("revoked") or 0):
+        return {"ok": False, "error": "device_revoked"}
     sid = sid_for(device_id)
     if not sid:
         return {"ok": False, "error": "device_offline"}
@@ -94,6 +99,9 @@ class DeviceNamespace(Namespace):
         auth = auth or {}
         device_id = str(auth.get("device_id") or "")
         token = str(auth.get("token") or "")
+        device = get_device(device_id)
+        if device and int(device.get("revoked") or 0):
+            raise ConnectionRefusedError({"error": "device_revoked"})
         row = validate_device_token(device_id, token)
         if not row:
             log.warning("device connect rejected device_id=%s", device_id or "(missing)")

@@ -56,7 +56,11 @@ function createStore({ app, safeStorage, fsModule = fs }) {
     return validateConfig(decoded);
   }
 
-  return { save, load, filePath };
+  function clear() {
+    if (fsModule.existsSync(filePath)) fsModule.unlinkSync(filePath);
+  }
+
+  return { save, load, clear, filePath };
 }
 
 module.exports = { createStore, validateConfig };

@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+import re
 import sqlite3
 from pathlib import Path
 from threading import Lock
@@ -284,6 +285,37 @@ def _sqlite_write(sql: str, params: tuple = ()) -> bool:
     with db_lock:
         conn = _sqlite_connect()
         try:
+            insert = re.fullmatch(
+                r"\s*INSERT\s+INTO\s+(conversations|events)\s*\(([^)]*)\)\s*"
+                r"VALUES\s*\(([^)]*)\)\s*;?\s*",
+                sql,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            if insert:
+                table = insert.group(1).lower()
+                columns = [column.strip() for column in insert.group(2).split(",")]
+                values = [value.strip() for value in insert.group(3).split(",")]
+                if not any(column.strip('"`[]').lower() == "timestamp" for column in columns):
+                    legacy_timestamp = next(
+                        (column for column in conn.execute(f"PRAGMA table_info({table})")
+                         if column[1].lower() == "timestamp" and column[3] and column[4] is None),
+                        None,
+                    )
+                    if legacy_timestamp:
+                        created_at_index = next(
+                            (index for index, column in enumerate(columns)
+                             if column.strip('"`[]').lower() == "created_at"),
+                            None,
+                        )
+                        timestamp_value = (
+                            params[created_at_index]
+                            if created_at_index is not None and created_at_index < len(params)
+                            else datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        )
+                        columns.append("timestamp")
+                        values.append("?")
+                        sql = f"INSERT INTO {table}({','.join(columns)}) VALUES({','.join(values)})"
+                        params = (*params, timestamp_value)
             conn.execute(sql, params)
             conn.commit()
             return True
