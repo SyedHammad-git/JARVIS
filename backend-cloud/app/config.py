@@ -7,7 +7,8 @@ import secrets
 import time
 from threading import Lock
 
-from database import cfg_get, cfg_set
+from app.bind import resolve_bind_host
+from app.db import cfg_get, cfg_set
 
 log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 

@@ -9,10 +9,10 @@ from flask import request
 from flask_socketio import Namespace, disconnect
 from socketio.exceptions import ConnectionRefusedError, TimeoutError as SocketIOTimeout
 
-from auth import add_alert
-from devices.pairing import get_device, get_device_status_cached, touch_last_seen, validate_device_token
-from extensions import socketio
-from notifications import send_discord_alert
+from app.auth import add_alert
+from app.devices.pairing import get_device, get_device_status_cached, touch_last_seen, validate_device_token
+from app.extensions import socketio
+from app.notifications import send_discord_alert
 
 log = logging.getLogger("jarvis.devices")
 

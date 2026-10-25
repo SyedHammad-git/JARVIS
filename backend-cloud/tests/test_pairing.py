@@ -1,8 +1,8 @@
 """Pairing: plaintext token is returned once; only sha256 is stored."""
 import unittest
 
-from devices.pairing import hash_token, issue_device, list_devices, revoke_device
-from database import db_read
+from app.devices.pairing import hash_token, issue_device, list_devices, revoke_device
+from app.db import db_read
 
 
 class PairingTests(unittest.TestCase):

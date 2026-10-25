@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -16,10 +15,9 @@ except ImportError:
     pass
 
 # Importing database initializes SQLite; migration DDL itself uses only the direct URL.
-os.environ["DB_BACKEND"] = "sqlite"
-sys.path.insert(0, str(ROOT))
+os.environ.setdefault("DB_BACKEND", "sqlite")
 
-import database
+from app import db as database
 
 
 def _statements(schema: str):

@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import logging
 
-from config import REQUESTS_OK, _req, DDGS_OK, DDGS, WEATHER_KEY
-from error_utils import classify_exception, CircuitBreaker
-from memory import search_facts_semantic
-from tools.registry import Tool, register
+from app.config import REQUESTS_OK, _req, DDGS_OK, DDGS, WEATHER_KEY
+from app.error_utils import classify_exception, CircuitBreaker
+from app.memory import search_facts_semantic
+from app.tools.registry import Tool, register
 
 log = logging.getLogger("jarvis.tools")
 _weather_breaker = CircuitBreaker(threshold=3, cooldown=60)

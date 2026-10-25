@@ -2,16 +2,16 @@
 J.A.R.V.I.S v17.M — Native function-calling agent
 """
 import json, logging, re, threading, time
-from config import (
+from app.config import (
     REQUESTS_OK,
     agent_lock,
     work_session, work_session_lock,
     EXECUTION_MODE, DEVICE_ID,
 )
-from ai_engine import chat, build_jarvis_context, AGENT_SYS_BASE
-from tools.registry import llm_schemas, get_tool
-from error_utils import classify_exception
-from memory import save_message, load_recent_messages, prune_conversation
+from app.ai.engine import chat, build_jarvis_context, AGENT_SYS_BASE
+from app.tools.registry import llm_schemas, get_tool
+from app.error_utils import classify_exception
+from app.memory import save_message, load_recent_messages, prune_conversation
 
 log = logging.getLogger("jarvis.agent")
 
@@ -71,12 +71,12 @@ def execute_tool(name: str, args: dict, ctx: dict | None = None) -> str:
 
     mode = ctx.get("execution_mode") or EXECUTION_MODE
     if name == "take_snapshot":
-        from vision.snapshots import snapshot_ack_to_text, snapshot_rate_limiter
+        from app.vision.snapshots import snapshot_ack_to_text, snapshot_rate_limiter
         user_key = ctx.get("snapshot_user") or ctx.get("device_id") or "unknown"
         if not snapshot_rate_limiter.allow(user_key):
             return "Camera snapshot rate limit reached. Please try again shortly."
         if mode != "local":
-            from devices.gateway import call_device
+            from app.devices.gateway import call_device
             ack = call_device(
                 ctx.get("device_id") or DEVICE_ID,
                 name,
@@ -89,7 +89,7 @@ def execute_tool(name: str, args: dict, ctx: dict | None = None) -> str:
 
     if tool.where == "device":
         if mode != "local":
-            from devices.gateway import call_device
+            from app.devices.gateway import call_device
             device_id = ctx.get("device_id") or DEVICE_ID
             result = call_device(device_id, name, args or {})
             with _last_action_lock:
@@ -144,7 +144,7 @@ def _run_agent_inner(user_input: str, session_id: str, max_steps: int, ctx: dict
         if ctx["execution_mode"] == "local":
             device_online = True
         else:
-            from devices.gateway import is_online
+            from app.devices.gateway import is_online
             device_online = is_online(device_id)
 
     schemas = llm_schemas(device_online=bool(device_online), device_id=device_id)

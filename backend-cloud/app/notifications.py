@@ -5,8 +5,8 @@ FIXED: C5 safe_msg/safe_title always defined before any use
 import datetime, json, logging, subprocess, threading
 from pathlib import Path
 
-from config import discord_cfg, REQUESTS_OK, _req
-from database import db_write, ts
+from app.config import discord_cfg, REQUESTS_OK, _req
+from app.db import db_write, ts
 
 log = logging.getLogger("jarvis.notifications")
 

@@ -5,11 +5,11 @@ import logging
 
 from flask import Blueprint, jsonify, request, session
 
-from auth import verify_pin
-from config import DEVICE_ID, EXECUTION_MODE
-from devices.gateway import is_online
-from devices.pairing import get_device_status_cached, issue_device, list_devices, revoke_device
-from error_utils import api_errors
+from app.auth import verify_pin
+from app.config import DEVICE_ID, EXECUTION_MODE
+from app.devices.gateway import is_online
+from app.devices.pairing import get_device_status_cached, issue_device, list_devices, revoke_device
+from app.error_utils import api_errors
 
 log = logging.getLogger("jarvis.devices")
 

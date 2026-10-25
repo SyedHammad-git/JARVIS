@@ -17,13 +17,13 @@ from threading import Lock
 
 import psutil
 
-from config import (
+from app.config import (
     heartbeat_cfg, heartbeat_queue, heartbeat_lock,
     work_session, work_session_lock,
 )
-from database import db_read, db_write, db_write_many, ts
-from notifications import send_os_notification
-from ai_engine import groq_as_manager
+from app.db import db_read, db_write, db_write_many, ts
+from app.notifications import send_os_notification
+from app.ai.engine import groq_as_manager
 
 log = logging.getLogger("jarvis.neural")
 

@@ -27,12 +27,12 @@ except Exception:
     PYAUTOGUI_OK = False
     print("[TOOLS] ⚠  pyautogui unavailable — GUI tools disabled")
 
-from config import CLIP_OK, pyperclip, _server_start
-from database import HOME, DATA_DIR
-from auth import safety_check, add_alert
-from ai_engine import call_gemini, groq_as_manager
-from error_utils import classify_exception
-from tools.registry import Tool, register
+from app.config import CLIP_OK, pyperclip, _server_start
+from app.db import HOME, DATA_DIR
+from app.auth import safety_check, add_alert
+from app.ai.engine import call_gemini, groq_as_manager
+from app.error_utils import classify_exception
+from app.tools.registry import Tool, register
 
 log = logging.getLogger("jarvis.tools")
 
@@ -262,7 +262,7 @@ def tool_describe_screen(_args=None):
 
 
 def tool_take_snapshot(args=None):
-    from config import EXECUTION_MODE, CV2_OK
+    from app.config import EXECUTION_MODE, CV2_OK
     if EXECUTION_MODE != "local" or not CV2_OK:
         return {"ok": False, "error": "camera_unavailable"}
     args = args or {}
@@ -382,7 +382,7 @@ def tool_create_folder(name, location=None):
 def tool_system_action(action):
     if action not in _SYSTEM_ACTIONS:
         return f"Unknown system action: {action}"
-    from command import perform_system_action
+    from app.command import perform_system_action
     return perform_system_action(action)
 
 

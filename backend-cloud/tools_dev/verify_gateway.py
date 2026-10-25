@@ -6,13 +6,11 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import threading
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
 
 from dotenv import load_dotenv
 load_dotenv(str(ROOT / ".env"), override=False)
@@ -65,9 +63,12 @@ def main() -> int:
     print("OPENROUTER_KEY", bool(os.environ.get("OPENROUTER_KEY")))
     print("JARVIS_PIN", bool(os.environ.get("JARVIS_PIN")))
 
-    from server import app, socketio
-    from devices.pairing import issue_device, revoke_device, validate_device_token
-    from devices.gateway import call_device, is_online
+    from app import create_app
+    from app.extensions import socketio
+    from app.devices.pairing import issue_device, revoke_device, validate_device_token
+    from app.devices.gateway import call_device, is_online
+
+    app = create_app()
 
     ready = threading.Event()
 

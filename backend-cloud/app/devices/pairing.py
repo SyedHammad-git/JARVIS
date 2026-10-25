@@ -8,7 +8,7 @@ import secrets
 import time
 from threading import Lock
 
-from database import db_read, db_write, ts
+from app.db import db_read, db_write, ts
 
 log = logging.getLogger("jarvis.devices")
 
@@ -105,7 +105,7 @@ def revoke_device(device_id: str) -> bool:
     invalidate_device_status_cache(device_id, revoked=True)
     log.info("Revoked device_id=%s", device_id)
     try:
-        from devices.gateway import disconnect_device
+        from app.devices.gateway import disconnect_device
         disconnect_device(device_id)
     except Exception as exc:
         log.warning("disconnect after revoke failed device_id=%s: %s", device_id, exc)

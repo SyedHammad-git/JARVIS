@@ -3,43 +3,51 @@
 from __future__ import annotations
 
 import logging
-import sys
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 from flask import Flask
+
+
+log = logging.getLogger("jarvis.backend")
+
+
+def load_environment() -> None:
+    backend_dir = Path(__file__).resolve().parents[1]
+    load_dotenv(backend_dir / ".env", override=False)
+
 
 def create_app(testing: bool = False, config_object: dict[str, Any] | None = None) -> Flask:
     """Create and configure the Flask app, starting workers only for runtime use."""
-    app_dir = str(Path(__file__).resolve().parent)
-    if app_dir not in sys.path:
-        sys.path.insert(0, app_dir)
-    repo_dir = str(Path(__file__).resolve().parents[2])
-    if repo_dir not in sys.path:
-        sys.path.insert(0, repo_dir)
+    load_environment()
 
-    from extensions import socketio
-    import database
-    database.init_db()
+    from app.db import init_db
+    from app.extensions import socketio
 
-    app = Flask(__name__, static_folder="static")
+    init_db()
+
+    app = Flask(
+        __name__,
+        static_folder=str(Path(__file__).resolve().parent / "static"),
+    )
 
     app.config.update(JSON_SORT_KEYS=False, MAX_CONTENT_LENGTH=32 * 1024 * 1024, TESTING=testing)
 
     if config_object:
         app.config.update(config_object)
 
-    import config as backend_config
+    from app.config import FLASK_SECRET
     if not app.config.get("SECRET_KEY"):
-        app.config["SECRET_KEY"] = backend_config.FLASK_SECRET
+        app.config["SECRET_KEY"] = FLASK_SECRET
 
-    from .routes.core_routes import core
-    from .routes.ai_routes import ai
-    from .routes.system_routes import system
-    from .routes.data_routes import data
-    from .routes.iot_routes import iot
-    from .devices.http import devices_bp
-    from devices.gateway import register_namespace
+    from app.devices.gateway import register_namespace
+    from app.devices.http import devices_bp
+    from app.routes.ai_routes import ai
+    from app.routes.core_routes import core
+    from app.routes.data_routes import data
+    from app.routes.iot_routes import iot
+    from app.routes.system_routes import system
     from flask import jsonify
 
     for blueprint in (core, ai, system, data, iot, devices_bp):
@@ -62,15 +70,11 @@ def create_app(testing: bool = False, config_object: dict[str, Any] | None = Non
         return jsonify({"error": "Internal server error", "code": 500}), 500
 
     if not app.config["TESTING"]:
-        import monitor
-        import neural
-        from vision.snapshots import cleanup_snapshots
+        from app import monitor, neural
+        from app.vision.snapshots import cleanup_snapshots
 
         cleanup_snapshots()
         monitor.start_background_threads()
         neural.start_background_threads()
 
     return app
-
-
-log = logging.getLogger("jarvis.backend")

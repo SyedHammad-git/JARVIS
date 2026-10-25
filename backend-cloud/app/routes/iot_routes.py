@@ -4,19 +4,19 @@ FIXED: C2 monitor_add uses config JSON, C3 monitor_status reads from JSON config
 """
 import json, logging
 from flask import Blueprint, jsonify, request, Response
-from database import db_read, db_write, ts
-from auth import add_alert
-from smarthome import (
+from app.db import db_read, db_write, ts
+from app.auth import add_alert
+from app.smarthome import (
     smarthome_devices, TUYA_DEVICES,
     toggle_device, save_devices, save_tuya_devices
 )
-from monitor import (
+from app.monitor import (
     cameras, cam_id_counter, cam_lock,
     motion_cfg, monitor_engine_running,
     _gen_frames, get_monitor_cache, invalidate_monitor_cache,
 )
-from error_utils import api_errors
-from config import EXECUTION_MODE
+from app.error_utils import api_errors
+from app.config import EXECUTION_MODE
 
 log = logging.getLogger("jarvis.routes.iot")
 iot = Blueprint("iot", __name__)

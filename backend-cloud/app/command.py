@@ -14,8 +14,8 @@ keywords like "create folder" or "volume up".
 import logging, re, subprocess
 from threading import Lock
 
-from auth import safety_check, add_alert, sec_log_count
-from error_utils import classify_exception
+from app.auth import safety_check, add_alert, sec_log_count
+from app.error_utils import classify_exception
 
 log = logging.getLogger("jarvis.command")
 command_lock = Lock()

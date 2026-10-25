@@ -6,24 +6,7 @@
 """
 import logging
 import os
-import sys
 from pathlib import Path
-
-APP_DIR = Path(__file__).resolve().parent / "app"
-if str(APP_DIR) not in sys.path:
-    sys.path.insert(0, str(APP_DIR))
-
-# ── 1. Load .env ──────────────────────────────────────────────────
-try:
-    from dotenv import load_dotenv
-    _env = Path(__file__).parent / ".env"
-    if _env.exists():
-        load_dotenv(str(_env))
-        print("[JARVIS] ✅ .env loaded")
-    else:
-        print("[JARVIS] ⚠  .env not found — using OS environment variables")
-except ImportError:
-    print("[JARVIS] ⚠  python-dotenv not installed (pip install python-dotenv)")
 
 # ── 2. Logging setup ──────────────────────────────────────────────
 # TASK-031: every module already logs to its own named logger
@@ -57,9 +40,12 @@ log = logging.getLogger("jarvis")
 
 from flask import jsonify
 
-from app import create_app
-from extensions import socketio
+from app import create_app, load_environment
+from app.extensions import socketio
+from app.bind import resolve_bind_host
 
+load_environment()
+_bind_host = resolve_bind_host() if __name__ == "__main__" else None
 
 app = create_app()
 
@@ -82,7 +68,7 @@ if _LIMITER_OK:
 
 
 # Import config AFTER dotenv so env vars are available
-import config as app_config
+import app.config as app_config
 app.config["SECRET_KEY"] = getattr(app_config, "FLASK_SECRET", app.config.get("SECRET_KEY"))
 app.config["JSON_SORT_KEYS"] = False
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024
@@ -125,14 +111,14 @@ def unhandled_exception(e):
     return jsonify({"error": "An unexpected error occurred", "code": 500}), 500
 
 # ── 9. Startup banner ─────────────────────────────────────────────
-from tools import AGENT_TOOLS
-from notifications import PLYER_OK
-from config import (
+from app.tools import AGENT_TOOLS
+from app.notifications import PLYER_OK
+from app.config import (
     GROQ_KEY, GEMINI_KEY, OPENROUTER_KEY, WEATHER_KEY,
     CV2_OK, DDGS_OK, CLIP_OK,
     heartbeat_cfg, EXECUTION_MODE, DEVICE_ID, DEVICE_GATEWAY,
 )
-from database import DB_PATH
+from app.db import DB_PATH
 
 print()
 print("╔══════════════════════════════════════════════════════════╗")
@@ -170,7 +156,7 @@ print()
 # plus a message queue such as Redis):
 #   gunicorn --worker-class gthread --threads 100 -w 1 server:app
 if __name__ == "__main__":
-    host  = os.environ.get("JARVIS_HOST", "127.0.0.1")
+    host  = _bind_host
     port  = int(os.environ.get("JARVIS_PORT", 5000))
     debug = os.environ.get("JARVIS_DEBUG", "false").lower() == "true"
 
@@ -205,4 +191,3 @@ if __name__ == "__main__":
             log.error("waitress not installed — run: pip install waitress")
             log.warning("Falling back to Flask dev server (HTTP only)")
             app.run(host=host, port=port, debug=False, threaded=True, use_reloader=False)
-

@@ -3,24 +3,23 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
+from pathlib import Path
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, ROOT)
+BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 try:
     from dotenv import load_dotenv
-    load_dotenv(os.path.join(ROOT, ".env"), override=False)
+    load_dotenv(BACKEND_DIR / ".env", override=False)
 except ImportError:
     pass
 
 def _load_database():
-    import database
-    return database
+    from app import db
+    return db
 
 
 def _add_memory(memory_id, fact, metadata):
-    from vector.pg_store import add_memory
+    from app.vector.pg_store import add_memory
     return add_memory(memory_id, fact, metadata)
 
 

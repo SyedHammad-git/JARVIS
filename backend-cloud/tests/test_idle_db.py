@@ -7,11 +7,11 @@ from unittest.mock import Mock
 
 from flask import Flask
 
-import monitor
-import neural
-from devices import gateway, pairing
-from devices import http as devices_http
-from routes import data_routes
+import app.monitor as monitor
+import app.neural as neural
+from app.devices import gateway, pairing
+from app.devices import http as devices_http
+from app.routes import data_routes
 
 
 def test_periodic_threads_issue_zero_database_calls_after_cache_warmup(monkeypatch):

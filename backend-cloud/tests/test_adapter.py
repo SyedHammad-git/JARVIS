@@ -3,7 +3,7 @@ import json
 import unittest
 from unittest.mock import patch
 
-from ai_engine import (
+from app.ai.engine import (
     normalize_openai_chat_completion,
     normalize_gemini_generate_content,
     openai_history_to_gemini,
@@ -100,8 +100,8 @@ class AdapterNormalizeTests(unittest.TestCase):
 class ChatFailoverTests(unittest.TestCase):
     def test_chat_uses_groq_then_identical_normalize(self):
         payload = _openai_payload()
-        with patch("ai_engine.groq_available", return_value=True), \
-             patch("ai_engine.call_groq", return_value={"ok": True, "data": payload}):
+        with patch("app.ai.engine.groq_available", return_value=True), \
+             patch("app.ai.engine.call_groq", return_value={"ok": True, "data": payload}):
             out = chat([{"role": "user", "content": "hi"}], tools=[])
         self.assertTrue(out["ok"])
         self.assertEqual(out["model"], "groq/llama-3.3-70b")
@@ -109,9 +109,9 @@ class ChatFailoverTests(unittest.TestCase):
 
     def test_chat_failsover_to_openrouter(self):
         payload = _openai_payload()
-        with patch("ai_engine.groq_available", return_value=False), \
-             patch("ai_engine.OPENROUTER_KEY", "x"), \
-             patch("ai_engine.call_openrouter", return_value={"ok": True, "data": payload}):
+        with patch("app.ai.engine.groq_available", return_value=False), \
+             patch("app.ai.engine.OPENROUTER_KEY", "x"), \
+             patch("app.ai.engine.call_openrouter", return_value={"ok": True, "data": payload}):
             out = chat([{"role": "user", "content": "hi"}], tools=[])
         self.assertTrue(out["ok"])
         self.assertEqual(out["model"], "openrouter/claude-haiku")
@@ -120,10 +120,10 @@ class ChatFailoverTests(unittest.TestCase):
     def test_chat_failsover_to_gemini_converting_history(self):
         gemini_norm = normalize_gemini_generate_content(_gemini_payload())
         gemini_norm["ok"] = True
-        with patch("ai_engine.groq_available", return_value=False), \
-             patch("ai_engine.OPENROUTER_KEY", ""), \
-             patch("ai_engine.GEMINI_KEY", "x"), \
-             patch("ai_engine.call_gemini_chat", return_value=gemini_norm) as mock_g:
+        with patch("app.ai.engine.groq_available", return_value=False), \
+             patch("app.ai.engine.OPENROUTER_KEY", ""), \
+             patch("app.ai.engine.GEMINI_KEY", "x"), \
+             patch("app.ai.engine.call_gemini_chat", return_value=gemini_norm) as mock_g:
             out = chat(
                 [
                     {"role": "system", "content": "sys"},

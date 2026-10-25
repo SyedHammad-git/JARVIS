@@ -1,10 +1,10 @@
 """J.A.R.V.I.S tool package — registry + server/device implementations."""
-from tools.registry import Tool, REGISTRY, register, llm_schemas, get_tool
-from tools import server_tools as _server_tools  # noqa: F401 — registers tools
-from tools import device_tools as _device_tools  # noqa: F401 — registers tools
+from app.tools.registry import Tool, REGISTRY, register, llm_schemas, get_tool
+from app.tools import server_tools as _server_tools  # noqa: F401 — registers tools
+from app.tools import device_tools as _device_tools  # noqa: F401 — registers tools
 
-from tools.server_tools import tool_get_weather, tool_web_search, tool_search_memory
-from tools.device_tools import (
+from app.tools.server_tools import tool_get_weather, tool_web_search, tool_search_memory
+from app.tools.device_tools import (
     APP_REGISTRY, APP_URL_REGISTRY, PYAUTOGUI_OK,
     tool_open_app, tool_open_url, tool_file_find, tool_file_read,
     tool_get_processes, tool_kill_process, tool_get_system_status,

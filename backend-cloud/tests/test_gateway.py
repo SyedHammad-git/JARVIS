@@ -5,14 +5,14 @@ from unittest.mock import patch
 
 from socketio.exceptions import TimeoutError as SocketIOTimeout
 
-from devices.gateway import call_device, is_online, _bind, _unbind_sid
-from devices.pairing import hash_token, issue_device, validate_device_token, revoke_device
-from extensions import socketio
+from app.devices.gateway import call_device, is_online, _bind, _unbind_sid
+from app.devices.pairing import hash_token, issue_device, validate_device_token, revoke_device
+from app.extensions import socketio
 
 
 class CallDeviceTests(unittest.TestCase):
     def setUp(self):
-        active_device = patch("devices.gateway.get_device_status_cached", return_value={"revoked": 0})
+        active_device = patch("app.devices.gateway.get_device_status_cached", return_value={"revoked": 0})
         active_device.start()
         self.addCleanup(active_device.stop)
 
@@ -24,7 +24,7 @@ class CallDeviceTests(unittest.TestCase):
     def test_timeout(self):
         _bind("dev_to", "sid_to")
         try:
-            with patch("devices.gateway.socketio.call", side_effect=SocketIOTimeout("t")):
+            with patch("app.devices.gateway.socketio.call", side_effect=SocketIOTimeout("t")):
                 out = call_device("dev_to", "open_app", {"target": "notepad"}, timeout=1)
             self.assertEqual(out, {"ok": False, "error": "device_timeout"})
         finally:
@@ -33,17 +33,17 @@ class CallDeviceTests(unittest.TestCase):
     def test_ack_must_be_dict_with_ok(self):
         _bind("dev_ack", "sid_ack")
         try:
-            with patch("devices.gateway.socketio.call", return_value="nope"):
+            with patch("app.devices.gateway.socketio.call", return_value="nope"):
                 self.assertEqual(
                     call_device("dev_ack", "open_app", {}),
                     {"ok": False, "error": "device_timeout"},
                 )
-            with patch("devices.gateway.socketio.call", return_value={"message": "missing ok"}):
+            with patch("app.devices.gateway.socketio.call", return_value={"message": "missing ok"}):
                 self.assertEqual(
                     call_device("dev_ack", "open_app", {}),
                     {"ok": False, "error": "device_timeout"},
                 )
-            with patch("devices.gateway.socketio.call",
+            with patch("app.devices.gateway.socketio.call",
                        return_value={"ok": True, "message": "fake executed"}):
                 out = call_device("dev_ack", "open_app", {"target": "notepad"})
             self.assertTrue(out["ok"])
@@ -54,7 +54,7 @@ class CallDeviceTests(unittest.TestCase):
     def test_payload_shape(self):
         _bind("dev_pay", "sid_pay")
         try:
-            with patch("devices.gateway.socketio.call",
+            with patch("app.devices.gateway.socketio.call",
                        return_value={"ok": True, "message": "x"}) as mock_call:
                 call_device("dev_pay", "open_app", {"target": "notepad"})
             args, kwargs = mock_call.call_args
@@ -71,8 +71,8 @@ class CallDeviceTests(unittest.TestCase):
     def test_revoked_device_is_refused_before_emit(self):
         _bind("dev_revoked", "sid_revoked")
         try:
-            with patch("devices.gateway.get_device_status_cached", return_value={"revoked": 1}), \
-                 patch("devices.gateway.socketio.call") as mock_call:
+            with patch("app.devices.gateway.get_device_status_cached", return_value={"revoked": 1}), \
+                 patch("app.devices.gateway.socketio.call") as mock_call:
                 self.assertEqual(
                     call_device("dev_revoked", "open_app", {"target": "notepad"}),
                     {"ok": False, "error": "device_revoked"},

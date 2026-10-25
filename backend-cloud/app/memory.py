@@ -1,9 +1,9 @@
 """J.A.R.V.I.S v17.M — Memory Module"""
 import logging
-from database import db_read, db_write, ts
-from auth import add_alert
-from ai_engine import build_jarvis_context
-from vector.pg_store import add_memory, delete_memory, search as search_vectors
+from app.db import db_read, db_write, ts
+from app.auth import add_alert
+from app.ai.engine import build_jarvis_context
+from app.vector.pg_store import add_memory, delete_memory, search as search_vectors
 
 log = logging.getLogger("jarvis.memory")
 

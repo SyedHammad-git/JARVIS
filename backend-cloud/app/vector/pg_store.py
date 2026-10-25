@@ -4,8 +4,8 @@ from __future__ import annotations
 import json
 import math
 
-from config import GEMINI_KEY, REQUESTS_OK, _req
-from database import DB_BACKEND, db_read, db_write
+from app.config import GEMINI_KEY, REQUESTS_OK, _req
+from app.db import DB_BACKEND, db_read, db_write
 
 EMBEDDING_DIMENSIONS = 768
 EMBEDDING_MODEL = "gemini-embedding-001"

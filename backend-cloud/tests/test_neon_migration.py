@@ -3,7 +3,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-import database
+import app.db as database
 import tools_dev.migrate_neon as migration
 
 

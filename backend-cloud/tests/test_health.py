@@ -3,9 +3,9 @@ import threading
 
 from flask import Flask
 
-import database
-from routes import core_routes
-from routes.core_routes import core
+import app.db as database
+from app.routes import core_routes
+from app.routes.core_routes import core
 
 
 def _health_client():
@@ -26,8 +26,8 @@ def _live_background_threads(monkeypatch):
 def test_health_reports_neon_latency_vector_rows_and_no_connection_values(monkeypatch):
     monkeypatch.setattr(database, "DB_BACKEND", "postgres")
     monkeypatch.setattr(database, "SQLITE_FALLBACK_ACTIVE", False)
-    monkeypatch.setattr("routes.core_routes.db_scalar", lambda _sql: 1)
-    monkeypatch.setattr("routes.core_routes.db_read", lambda _sql: [{"count": 17}])
+    monkeypatch.setattr("app.routes.core_routes.db_scalar", lambda _sql: 1)
+    monkeypatch.setattr("app.routes.core_routes.db_read", lambda _sql: [{"count": 17}])
     monkeypatch.setattr("psutil.cpu_percent", lambda interval=0.1: 1)
     _live_background_threads(monkeypatch)
 
@@ -46,8 +46,8 @@ def test_health_reports_neon_latency_vector_rows_and_no_connection_values(monkey
 def test_health_reports_sqlite_fallback_without_neon_probe(monkeypatch):
     monkeypatch.setattr(database, "DB_BACKEND", "sqlite")
     monkeypatch.setattr(database, "SQLITE_FALLBACK_ACTIVE", True)
-    monkeypatch.setattr("routes.core_routes.db_scalar", lambda _sql: 1)
-    monkeypatch.setattr("routes.core_routes.db_read", lambda _sql: [])
+    monkeypatch.setattr("app.routes.core_routes.db_scalar", lambda _sql: 1)
+    monkeypatch.setattr("app.routes.core_routes.db_read", lambda _sql: [])
     monkeypatch.setattr("psutil.cpu_percent", lambda interval=0.1: 1)
     _live_background_threads(monkeypatch)
 

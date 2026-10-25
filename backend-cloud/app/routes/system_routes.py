@@ -6,18 +6,18 @@ try:
 except Exception:
     pyautogui = None; _PGUI_OK = False
 from flask import Blueprint, jsonify, request
-from config import (
+from app.config import (
     BLACKLIST, security_settings, cache,
     discord_cfg, heartbeat_cfg, heartbeat_queue, heartbeat_lock
 )
-from database import db_read, cfg_set, HOME
-from auth import add_alert, verify_pin
-from notifications import send_discord_alert
-from tools import (
+from app.db import db_read, cfg_set, HOME
+from app.auth import add_alert, verify_pin
+from app.notifications import send_discord_alert
+from app.tools import (
     tool_get_weather, tool_get_processes, tool_kill_process,
     tool_describe_screen, tool_file_read
 )
-from error_utils import api_errors, classify_exception
+from app.error_utils import api_errors, classify_exception
 
 log    = logging.getLogger("jarvis.routes.system")
 system = Blueprint("system", __name__)
@@ -154,7 +154,7 @@ def files_read():
 @api_errors
 def clipboard():
     if request.method == "OPTIONS": return "", 204
-    from tools import tool_get_clipboard, tool_set_clipboard
+    from app.tools import tool_get_clipboard, tool_set_clipboard
     if request.method == "POST":
         text = (request.get_json(silent=True) or {}).get("text","")
         return jsonify({"ok": True, "result": tool_set_clipboard(text)})
@@ -279,7 +279,7 @@ def screen_analyze():
 @system.route("/api/screen/active_window", methods=["GET"])
 @api_errors
 def screen_active_window():
-    from monitor import get_active_window
+    from app.monitor import get_active_window
     win = get_active_window()
     return jsonify({
         "window": win,

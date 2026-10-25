@@ -3,9 +3,9 @@ J.A.R.V.I.S v17.M — Smart Home Module
 FIXED: L4 removed duplicate TUYA_OK (now imported from config)
 """
 import json, logging
-from database import cfg_get, cfg_set
-from auth import add_alert
-from config import TUYA_OK   # ✅ FIX L4: single source of truth
+from app.db import cfg_get, cfg_set
+from app.auth import add_alert
+from app.config import TUYA_OK   # ✅ FIX L4: single source of truth
 
 log = logging.getLogger("jarvis.smarthome")
 

@@ -1,8 +1,8 @@
 """Registry: device tools hidden when the device is offline."""
 import unittest
 
-import tools  # noqa: F401 — registers server + device tools
-from tools.registry import llm_schemas, REGISTRY
+import app.tools as tools  # noqa: F401 — registers server + device tools
+from app.tools.registry import llm_schemas, REGISTRY
 
 
 class RegistrySchemaTests(unittest.TestCase):

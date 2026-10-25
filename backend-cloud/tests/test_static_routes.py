@@ -1,7 +1,7 @@
+
 from flask import Flask
 
-from routes.core_routes import core
-
+from app.routes.core_routes import core
 
 def test_desktop_page_is_served_as_html():
     app = Flask(__name__)

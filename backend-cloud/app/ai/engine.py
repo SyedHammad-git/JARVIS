@@ -4,14 +4,14 @@ FIXED: M3 _manager_cache eviction, M4 ai_router_state thread safety, M1 Gemini U
 """
 import datetime, json, logging, threading, time, uuid
 
-from config import (
+from app.config import (
     GROQ_KEY, GEMINI_KEY, OPENROUTER_KEY,
     GROQ_URL, GROQ_MODEL, OPENROUTER_URL, OPENROUTER_MODEL,
     ai_lock, ai_router_state, ai_router_lock, stat_lock,
     work_session, cache, REQUESTS_OK, _req, get_gemini_url,
     GROQ_FAIL_THRESHOLD, GROQ_COOLDOWN_SECS
 )
-from database import db_read, ts
+from app.db import db_read, ts
 
 log = logging.getLogger("jarvis.ai")
 

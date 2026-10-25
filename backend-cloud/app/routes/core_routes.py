@@ -9,24 +9,24 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request, send_from_directory
 
-from config import (
+from app.config import (
     cache, stat_lock, _server_start,
     GROQ_KEY, GEMINI_KEY, OPENROUTER_KEY,
     ai_router_state, ai_router_lock,
     work_session, work_session_lock,
     discord_cfg, heartbeat_cfg, heartbeat_queue, heartbeat_lock
 )
-import database
-from database import db_read, db_scalar, ts
-from auth import sec_log_count
-from command import cmd_route
-from agent import run_agent
+import app.db as database
+from app.db import db_read, db_scalar, ts
+from app.auth import sec_log_count
+from app.command import cmd_route
+from app.ai.agent import run_agent
 
 # ✅ FIX L5: import module-level objects once at module load, not inside _pulse() on every call
-import monitor   as _mon
-import smarthome as _sh
-import neural    as _neu
-from error_utils import api_errors
+import app.monitor as _mon
+import app.smarthome as _sh
+import app.neural as _neu
+from app.error_utils import api_errors
 
 log  = logging.getLogger("jarvis.routes.core")
 core = Blueprint("core", __name__)

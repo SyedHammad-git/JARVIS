@@ -17,10 +17,10 @@ from threading import Lock
 
 import psutil
 
-from config import CV2_OK, EXECUTION_MODE, REQUESTS_OK, _req, cache, stat_lock
-from database import db_read, db_write, db_write_many, ts, DATA_DIR
-from auth import add_alert
-from notifications import send_discord_alert
+from app.config import CV2_OK, EXECUTION_MODE, REQUESTS_OK, _req, cache, stat_lock
+from app.db import db_read, db_write, db_write_many, ts, DATA_DIR
+from app.auth import add_alert
+from app.notifications import send_discord_alert
 
 log = logging.getLogger("jarvis.monitor")
 

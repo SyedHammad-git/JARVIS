@@ -3,9 +3,9 @@ import json
 import unittest
 from unittest.mock import patch
 
-import tools  # noqa: F401
-from tools.registry import REGISTRY
-from agent import (
+import app.tools as tools  # noqa: F401
+from app.tools.registry import REGISTRY
+from app.ai.agent import (
     execute_tool, run_agent, truncate_tool_result, _RESULT_LIMIT,
     _last_action_registry, _last_action_lock,
 )
@@ -69,10 +69,10 @@ class AgentLoopTests(unittest.TestCase):
 
     def test_loop_weather_then_open_app_local(self):
         fake = FakeLLM()
-        with patch("agent.chat", fake), \
-             patch("agent.save_message", return_value=True), \
-             patch("agent.load_recent_messages", return_value=[]), \
-             patch("agent.prune_conversation", return_value=True):
+        with patch("app.ai.agent.chat", fake), \
+             patch("app.ai.agent.save_message", return_value=True), \
+             patch("app.ai.agent.load_recent_messages", return_value=[]), \
+             patch("app.ai.agent.prune_conversation", return_value=True):
             out = run_agent(
                 "weather in Lahore and open notepad",
                 session_id="test-loop",
@@ -89,7 +89,7 @@ class AgentLoopTests(unittest.TestCase):
         self.assertLessEqual(fake.calls, 6)
 
     def test_device_tool_remote_offline(self):
-        with patch("devices.gateway.call_device", return_value={"ok": False, "error": "device_offline"}):
+        with patch("app.devices.gateway.call_device", return_value={"ok": False, "error": "device_offline"}):
             raw = execute_tool(
                 "open_app",
                 {"target": "notepad"},
@@ -100,7 +100,7 @@ class AgentLoopTests(unittest.TestCase):
         self.assertEqual(data["error"], "device_offline")
 
     def test_device_tool_remote_ack(self):
-        with patch("devices.gateway.call_device",
+        with patch("app.devices.gateway.call_device",
                    return_value={"ok": True, "message": "fake executed"}) as mock_call:
             raw = execute_tool(
                 "open_app",
@@ -128,11 +128,11 @@ class AgentLoopTests(unittest.TestCase):
                 }
 
         fake = OfflineLLM()
-        with patch("agent.chat", fake), \
-             patch("agent.save_message", return_value=True), \
-             patch("agent.load_recent_messages", return_value=[]), \
-             patch("agent.prune_conversation", return_value=True), \
-             patch("devices.gateway.is_online", return_value=False):
+        with patch("app.ai.agent.chat", fake), \
+             patch("app.ai.agent.save_message", return_value=True), \
+             patch("app.ai.agent.load_recent_messages", return_value=[]), \
+             patch("app.ai.agent.prune_conversation", return_value=True), \
+             patch("app.devices.gateway.is_online", return_value=False):
             out = run_agent(
                 "open notepad",
                 session_id="test-offline",

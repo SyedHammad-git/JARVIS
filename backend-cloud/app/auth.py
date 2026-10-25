@@ -7,8 +7,8 @@ import logging
 import subprocess
 import threading
 
-from config import BLACKLIST, security_settings, stat_lock, cache
-from database import db_write, cfg_get, ts
+from app.config import BLACKLIST, security_settings, stat_lock, cache
+from app.db import db_write, cfg_get, ts
 
 log = logging.getLogger("jarvis.auth")
 

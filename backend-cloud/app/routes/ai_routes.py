@@ -1,17 +1,17 @@
 """J.A.R.V.I.S v17.M — AI Routes Blueprint"""
 import logging, time
 from flask import Blueprint, jsonify, request
-from config import (
+from app.config import (
     ai_router_state, ai_router_lock,
     work_session, work_session_lock,
     heartbeat_cfg, heartbeat_queue, heartbeat_lock
 )
-from database import db_read, db_write
-from agent import run_agent
-from ai_engine import call_gemini, route_ai_call, build_jarvis_context, AGENT_SYS_BASE
-from neural import neural_state, neural_lock, push_system_event
-from notifications import send_os_notification
-from error_utils import api_errors
+from app.db import db_read, db_write
+from app.ai.agent import run_agent
+from app.ai.engine import call_gemini, route_ai_call, build_jarvis_context, AGENT_SYS_BASE
+from app.neural import neural_state, neural_lock, push_system_event
+from app.notifications import send_os_notification
+from app.error_utils import api_errors
 
 log = logging.getLogger("jarvis.routes.ai")
 ai  = Blueprint("ai", __name__)

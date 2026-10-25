@@ -3,7 +3,7 @@ import re
 from urllib.parse import parse_qs, urlsplit
 from unittest.mock import Mock
 
-import database
+import app.db as database
 import pytest
 
 

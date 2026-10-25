@@ -3,7 +3,7 @@ import sqlite3
 
 import pytest
 
-import database
+import app.db as database
 
 
 LEGACY_INSERTS = [

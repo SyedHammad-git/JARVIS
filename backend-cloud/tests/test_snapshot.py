@@ -4,13 +4,13 @@ import json
 import logging
 from unittest.mock import patch
 
-import tools  # noqa: F401
-import agent
-from tools.device_tools import tool_take_snapshot
-import config
-import database
-from vision import snapshots
-from vision.snapshots import (
+import app.tools as tools  # noqa: F401
+import app.ai.agent as agent
+from app.tools.device_tools import tool_take_snapshot
+import app.config as config
+import app.db as database
+from app.vision import snapshots
+from app.vision.snapshots import (
     MAX_IMAGE_BYTES,
     SnapshotRateLimiter,
     cleanup_snapshots,
@@ -21,7 +21,7 @@ from vision.snapshots import (
 
 def test_oversized_snapshot_is_rejected_before_vision_or_storage(tmp_path, caplog):
     image_b64 = base64.b64encode(b"\xff\xd8\xff" + b"x" * MAX_IMAGE_BYTES).decode("ascii")
-    vision = patch("ai_engine.call_gemini")
+    vision = patch("app.ai.engine.call_gemini")
     with vision as call_vision, caplog.at_level(logging.INFO):
         result = snapshot_ack_to_text(
             {"image_b64": image_b64, "mime": "image/jpeg"},
@@ -68,12 +68,12 @@ def test_snapshot_sends_image_only_to_vision_and_keeps_it_out_of_history(tmp_pat
         saved.append(json.dumps(args))
         return True
 
-    with patch("agent.chat", side_effect=fake_chat), \
-         patch("devices.gateway.call_device", return_value={"image_b64": image_b64, "mime": "image/jpeg"}) as call_device, \
-         patch("ai_engine.call_gemini", return_value={"ok": True, "text": "A desk is visible."}) as call_vision, \
-         patch("agent.load_recent_messages", return_value=[]), \
-         patch("agent.save_message", side_effect=save_message), \
-         patch("agent.prune_conversation", return_value=True), \
+    with patch("app.ai.agent.chat", side_effect=fake_chat), \
+         patch("app.devices.gateway.call_device", return_value={"image_b64": image_b64, "mime": "image/jpeg"}) as call_device, \
+         patch("app.ai.engine.call_gemini", return_value={"ok": True, "text": "A desk is visible."}) as call_vision, \
+         patch("app.ai.agent.load_recent_messages", return_value=[]), \
+         patch("app.ai.agent.save_message", side_effect=save_message), \
+         patch("app.ai.agent.prune_conversation", return_value=True), \
          caplog.at_level(logging.INFO):
         result = agent.run_agent(
             "Take a snapshot and describe it.",

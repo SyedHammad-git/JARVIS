@@ -10,8 +10,8 @@ import time
 from collections import deque
 from pathlib import Path
 
-import database
-from database import DATA_DIR
+import app.db as database
+from app.db import DATA_DIR
 
 MAX_IMAGE_BYTES = 1024 * 1024
 SNAPSHOT_TTL_SECONDS = 24 * 60 * 60
@@ -122,7 +122,7 @@ def snapshot_ack_to_text(ack: dict, question: str, image_dir: Path | None = None
         return "Camera snapshot could not be stored."
 
     if vision_fn is None:
-        from ai_engine import call_gemini
+        from app.ai.engine import call_gemini
         vision_fn = call_gemini
     safe_question = question.strip()[:500] if isinstance(question, str) else ""
     prompt = (

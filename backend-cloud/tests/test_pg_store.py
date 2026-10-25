@@ -5,10 +5,10 @@ import json
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-import memory
-import database
+import app.memory as memory
+import app.db as database
 import scripts.backfill_vectors as backfill_vectors
-import vector.pg_store as pg_store
+import app.vector.pg_store as pg_store
 
 
 def test_gemini_embedding_uses_768_dimensions_without_logging_secrets(monkeypatch):
