@@ -15,7 +15,8 @@ from config import (
     work_session, work_session_lock,
     discord_cfg, heartbeat_cfg, heartbeat_queue, heartbeat_lock
 )
-from database import db_scalar, ts
+import database
+from database import db_read, db_scalar, ts
 from auth import sec_log_count
 from command import cmd_route
 from agent import run_agent
@@ -188,7 +189,15 @@ def health():
     import psutil
 
     # ── Database ───────────────────────────────────────────────────
+    db_backend = database.DB_BACKEND
+    db_started = time.perf_counter()
     db_ok = db_scalar("SELECT 1") == 1
+    db_latency_ms = round((time.perf_counter() - db_started) * 1000, 2) if db_backend == "postgres" else None
+    pgvector_rows = None
+    if db_backend == "postgres":
+        vector_counts = db_read("SELECT COUNT(*) AS count FROM memory_vectors")
+        if vector_counts:
+            pgvector_rows = int(vector_counts[0].get("count", 0))
 
     # ── CPU headroom (existing resource check, kept as-is) ──────────
     cpu_ok = psutil.cpu_percent(interval=0.1) < 95
@@ -229,6 +238,10 @@ def health():
     return jsonify({
         "status":       status,
         "db":           "ok" if db_ok else "error",
+        "db_backend":   db_backend,
+        "neon_select_1_latency_ms": db_latency_ms,
+        "pgvector_row_count": pgvector_rows,
+        "sqlite_fallback_active": bool(database.SQLITE_FALLBACK_ACTIVE),
         "cpu_ok":       cpu_ok,
         "ai_providers": providers,
         "ai_available": ai_available,
