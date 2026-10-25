@@ -8,7 +8,7 @@ from collections import defaultdict, deque
 from flask import Blueprint, current_app, jsonify, request, session
 
 from app.authentication import get_user, verify_password, verify_totp
-from app.security import get_client_ip
+from app.security import configured_auth_mode, get_client_ip
 
 auth = Blueprint("auth", __name__)
 _attempt_lock = threading.Lock()
@@ -56,6 +56,8 @@ def _csrf_valid() -> bool:
 
 @auth.route("/api/auth/login", methods=["GET", "POST", "OPTIONS"])
 def login():
+    if configured_auth_mode() == "clerk":
+        return jsonify({"ok": False, "error": "local_auth_disabled"}), 404
     if request.method == "OPTIONS":
         return "", 204
     if request.method == "GET":

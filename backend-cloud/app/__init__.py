@@ -37,10 +37,12 @@ def create_app(
         configure_proxy,
         configure_session,
         configured_cors_origins,
+        configured_auth_mode,
         install_api_security,
         validate_production_config,
     )
 
+    configured_auth_mode()
     validate_production_config()
     production = os.environ.get("JARVIS_ENV", "development").lower() == "production"
     if not testing and not production:

@@ -37,6 +37,7 @@ The dashboard sends a short-lived Clerk session token in `Authorization: Bearer 
 
 - `CLERK_ISSUER`: the exact HTTPS issuer in Clerk session JWTs (no trailing slash).
 - `CLERK_JWKS_URL`: the corresponding HTTPS `/.well-known/jwks.json` URL.
+- `AUTH_MODE=clerk`: require Clerk bearer tokens; session cookies and password login are rejected.
 - `API_KEY_ENCRYPTION_KEY`: a persistent Fernet key used only by the backend to encrypt provider keys at rest. Generate a new value with:
 
   ```powershell
@@ -46,7 +47,7 @@ The dashboard sends a short-lived Clerk session token in `Authorization: Bearer 
   Store it in the backend hosting provider's secret manager. Back it up securely: losing it makes saved provider keys unreadable; rotating it requires re-encrypting stored keys before replacing it.
 
 - `CORS_ORIGINS`: a comma-separated allowlist containing the exact Vercel production and approved preview origins; no `*`.
-- `JARVIS_ENV=production`, plus the existing production settings such as a strong `FLASK_SECRET`, `DATABASE_URL`, and `AUTH_ENABLED=1`.
+- `JARVIS_ENV=production`, plus `AUTH_MODE=clerk`, a strong `FLASK_SECRET`, `DATABASE_URL`, and `AUTH_ENABLED=1`. Production refuses local password/TOTP mode unless `ALLOW_LOCAL_AUTH=1` is explicitly set; that exception emits a critical security warning.
 
 The backend's `backend-cloud/.env.example` has the backend-only variable names and setup notes. Do not place `API_KEY_ENCRYPTION_KEY`, Clerk secret keys, or AI provider keys in Vercel's `NEXT_PUBLIC_*` variables. The frontend never receives those values.
 
@@ -58,6 +59,8 @@ Configure these in the backend hosting provider's secret manager, not in Vercel:
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
+| `AUTH_MODE` | `clerk` in production; defaults to `local` in development | Select `local` password + TOTP session auth or `clerk` bearer-token-only auth. |
+| `ALLOW_LOCAL_AUTH` | No; default off | Explicitly permits local password/TOTP auth in production; logs a critical warning. |
 | `CLERK_ISSUER` | Yes | HTTPS issuer expected in Clerk session JWTs. |
 | `CLERK_JWKS_URL` | Yes | HTTPS JWKS endpoint; retrieval has a short timeout and cached signing keys. |
 | `CLERK_AUTHORIZED_PARTIES` | Yes in production | Comma-separated exact allowed `azp` values. Keep this separate from the CORS allowlist. |

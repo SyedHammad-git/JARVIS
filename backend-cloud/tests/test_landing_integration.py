@@ -22,6 +22,7 @@ def _client(monkeypatch, tmp_path, subject="clerk_user_1"):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "jarvis.db")
     monkeypatch.setattr(db, "DB_BACKEND", "sqlite")
     monkeypatch.setenv("DB_BACKEND", "sqlite")
+    monkeypatch.setenv("AUTH_MODE", "clerk")
     monkeypatch.setenv("API_KEY_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
     monkeypatch.setenv("CLERK_ISSUER", "https://clerk.example.test")
     monkeypatch.setenv("CLERK_JWKS_URL", "https://clerk.example.test/.well-known/jwks.json")
@@ -39,7 +40,7 @@ def _client(monkeypatch, tmp_path, subject="clerk_user_1"):
 
 
 def _headers(token="valid-token"):
-    return {"Authorization": f"Bearer {token}"}
+    return {"Authorization": "Bearer " + token}
 
 
 def test_user_key_is_encrypted_and_scoped_by_clerk_subject(monkeypatch, tmp_path):

@@ -8,10 +8,14 @@ import pyotp
 from app import load_environment
 from app.authentication import create_user
 from app.db import db_scalar, init_db
+from app.security import configured_auth_mode
 
 
 def main() -> int:
     load_environment()
+    if configured_auth_mode() != "local":
+        print("User creation is disabled unless AUTH_MODE=local.")
+        return 1
     init_db()
     if int(db_scalar("SELECT COUNT(*) FROM users") or 0):
         print("A user already exists. Manage accounts through the authenticated API.")

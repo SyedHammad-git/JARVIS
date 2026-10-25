@@ -13,6 +13,7 @@ atexit.register(_TEST_DATA_DIR.cleanup)
 os.environ["JARVIS_SKIP_DOTENV"] = "1"
 os.environ["JARVIS_DATA_DIR"] = _TEST_DATA_DIR.name
 os.environ["DB_BACKEND"] = "sqlite"
+os.environ["AUTH_MODE"] = "local"
 os.environ["GROQ_KEY"] = "test-groq-key"
 os.environ["GEMINI_KEY"] = "test-gemini-key"
 os.environ["OPENROUTER_KEY"] = "test-openrouter-key"

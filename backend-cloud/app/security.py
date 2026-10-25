@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 import os
 import threading
 from datetime import timedelta
@@ -8,6 +9,8 @@ from datetime import timedelta
 import jwt
 from flask import g, jsonify, request, session
 from werkzeug.middleware.proxy_fix import ProxyFix
+
+log = logging.getLogger("jarvis.security")
 
 PUBLIC_API_PATHS = {
     "/api/ping",
@@ -89,6 +92,13 @@ def configured_cors_origins() -> list[str]:
 def validate_production_config() -> None:
     if os.environ.get("JARVIS_ENV", "development").lower() != "production":
         return
+    auth_mode = configured_auth_mode()
+    if auth_mode != "clerk":
+        if os.environ.get("ALLOW_LOCAL_AUTH", "").strip() != "1":
+            raise RuntimeError("Production startup refused: AUTH_MODE=clerk is required")
+        log.critical(
+            "SECURITY WARNING: ALLOW_LOCAL_AUTH=1 enables local password/TOTP auth in production"
+        )
     if os.environ.get("AUTH_ENABLED", "1") != "1":
         raise RuntimeError("Production startup refused: AUTH_ENABLED must be 1")
     secret = os.environ.get("FLASK_SECRET", "")
@@ -99,14 +109,15 @@ def validate_production_config() -> None:
         raise RuntimeError("Production startup refused: CORS_ORIGINS must contain explicit origins")
     if not os.environ.get("DATABASE_URL", "").strip():
         raise RuntimeError("Production startup refused: DATABASE_URL is required")
-    if (not os.environ.get("CLERK_ISSUER", "").strip()
-            or not os.environ.get("CLERK_JWKS_URL", "").strip()):
-        raise RuntimeError("Production startup refused: CLERK_ISSUER and CLERK_JWKS_URL are required")
-    authorized_parties = configured_authorized_parties()
-    if not authorized_parties:
-        raise RuntimeError("Production startup refused: CLERK_AUTHORIZED_PARTIES is required")
-    if any(not party.startswith("https://") or "*" in party for party in authorized_parties):
-        raise RuntimeError("Production startup refused: authorized parties must be explicit HTTPS origins")
+    if auth_mode == "clerk":
+        if (not os.environ.get("CLERK_ISSUER", "").strip()
+                or not os.environ.get("CLERK_JWKS_URL", "").strip()):
+            raise RuntimeError("Production startup refused: CLERK_ISSUER and CLERK_JWKS_URL are required")
+        authorized_parties = configured_authorized_parties()
+        if not authorized_parties:
+            raise RuntimeError("Production startup refused: CLERK_AUTHORIZED_PARTIES is required")
+        if any(not party.startswith("https://") or "*" in party for party in authorized_parties):
+            raise RuntimeError("Production startup refused: authorized parties must be explicit HTTPS origins")
     if not os.environ.get("API_KEY_ENCRYPTION_KEY", "").strip():
         raise RuntimeError("Production startup refused: API_KEY_ENCRYPTION_KEY is required")
 
@@ -119,10 +130,12 @@ def install_api_security(app) -> None:
         if request.method == "OPTIONS":
             return None
 
-        username = session.get("jarvis_user")
+        mode = configured_auth_mode()
         authorization = request.headers.get("Authorization", "")
         is_bearer = authorization.startswith("Bearer ")
-        if is_bearer:
+        if mode == "clerk":
+            if not is_bearer:
+                return jsonify({"ok": False, "error": "authentication_required"}), 401
             token = authorization[7:].strip()
             if not token:
                 return jsonify({"ok": False, "error": "authentication_required"}), 401
@@ -139,8 +152,11 @@ def install_api_security(app) -> None:
             if not username:
                 return jsonify({"ok": False, "error": "authentication_required"}), 401
             g.current_user = {"username": username, "disabled": 0}
-        if username:
-            if not is_bearer:
+        elif is_bearer:
+            return jsonify({"ok": False, "error": "authentication_required"}), 401
+        else:
+            username = session.get("jarvis_user")
+            if username:
                 from app.authentication import get_user
 
                 user = get_user(username)
@@ -154,7 +170,8 @@ def install_api_security(app) -> None:
             from app.config import set_user_api_keys
             g.api_key_context_token = set_user_api_keys({})
 
-        if not username and request.path == "/api/device/status" and request.method == "GET":
+        if (mode == "local" and not username
+                and request.path == "/api/device/status" and request.method == "GET"):
             from app.devices.pairing import get_device
             from app.devices.pairing import hash_token
 
@@ -172,7 +189,7 @@ def install_api_security(app) -> None:
             response.status_code = 401
             return response
 
-        if request.method not in CSRF_SAFE_METHODS and not is_bearer:
+        if mode == "local" and request.method not in CSRF_SAFE_METHODS:
             expected = session.get("csrf_token", "")
             provided = request.headers.get("X-CSRF-Token", "")
             if not expected or not provided or not hmac.compare_digest(expected, provided):
@@ -206,10 +223,18 @@ def install_api_security(app) -> None:
 
 
 def configure_session(app) -> None:
+    production = os.environ.get("JARVIS_ENV", "development").strip().lower() == "production"
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,
-        SESSION_COOKIE_SECURE=True,
+        SESSION_COOKIE_SECURE=production,
         SESSION_COOKIE_SAMESITE="Strict",
         PERMANENT_SESSION_LIFETIME=timedelta(minutes=30),
         AUTH_ENABLED=True,
     )
+
+
+def configured_auth_mode() -> str:
+    mode = os.environ.get("AUTH_MODE", "local").strip().lower()
+    if mode not in {"local", "clerk"}:
+        raise RuntimeError("AUTH_MODE must be either 'local' or 'clerk'")
+    return mode

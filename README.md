@@ -24,12 +24,15 @@ py -m pytest -q
 ```
 
 The app loads `backend-cloud/.env` by an absolute package-derived path, regardless of the
-current working directory. Public binds are refused unless `ALLOW_PUBLIC_BIND=1` is set;
-the API has no authentication, so keep the development server on loopback.
+current working directory. Public binds are refused unless `ALLOW_PUBLIC_BIND=1` is set.
+Development defaults to `AUTH_MODE=local` for password + TOTP session login. Production
+requires `AUTH_MODE=clerk`; `ALLOW_LOCAL_AUTH=1` is an explicit, loudly logged exception.
+The cloud backend does not execute local OS actions. Those actions are dispatched only
+to a paired Electron client.
 
 Open: http://localhost:5000  
 Mobile: http://localhost:5000/mobile  
-Health: http://localhost:5000/api/ping
+Health: http://localhost:5000/api/health
 
 ---
 
@@ -81,8 +84,7 @@ keyword search retained whenever embeddings or pgvector are unavailable.
 Paired PCs connect on namespace `/device` (`wss://` in production).
 
 - **Local Windows:** `py wsgi.py` uses Flask-SocketIO + Werkzeug
-  (`allow_unsafe_werkzeug=True`), default bind `127.0.0.1`. Waitress cannot
-  serve WebSockets — it is used only when `DEVICE_GATEWAY=off`.
+  (`allow_unsafe_werkzeug=True`), default bind `127.0.0.1`.
 - **Production (Linux):** one Gunicorn threaded worker (multiple workers
   need sticky sessions and a message queue):
 

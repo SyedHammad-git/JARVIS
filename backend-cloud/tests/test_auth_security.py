@@ -11,6 +11,7 @@ from werkzeug.routing import UUIDConverter
 from app import create_app
 from app.authentication import create_user
 from app.security import (
+    configure_session,
     configure_proxy,
     get_client_ip,
     validate_production_config,
@@ -54,7 +55,10 @@ def test_all_api_rules_require_auth_except_explicit_public_routes():
     assert client.get("/api/ping").status_code == 200
     health = client.get("/api/health")
     assert health.status_code == 200
-    assert set(health.get_json()) == {"status", "version"}
+    assert {
+        "status", "version", "db_ok", "db_backend", "neon_select_1_latency_ms",
+        "pgvector_row_count", "sqlite_fallback_active", "online_device_count",
+    } == set(health.get_json())
     assert client.get("/api/auth/login").status_code == 200
 
 
@@ -83,7 +87,7 @@ def test_login_requires_csrf_and_password_totp_session(monkeypatch):
     assert response.status_code == 200
     assert response.get_json()["ok"] is True
     assert response.headers.get("Set-Cookie", "").find("HttpOnly") >= 0
-    assert "Secure" in response.headers.get("Set-Cookie", "")
+    assert "Secure" not in response.headers.get("Set-Cookie", "")
     assert "SameSite=Strict" in response.headers.get("Set-Cookie", "")
 
     csrf_after_login = response.get_json()["csrf_token"]
@@ -93,6 +97,17 @@ def test_login_requires_csrf_and_password_totp_session(monkeypatch):
         headers={"X-CSRF-Token": csrf_after_login},
     )
     assert protected.status_code != 401
+
+
+def test_session_cookie_secure_flag_tracks_environment(monkeypatch):
+    app = Flask("session-cookie-test")
+    monkeypatch.setenv("JARVIS_ENV", "development")
+    configure_session(app)
+    assert app.config["SESSION_COOKIE_SECURE"] is False
+
+    monkeypatch.setenv("JARVIS_ENV", "production")
+    configure_session(app)
+    assert app.config["SESSION_COOKIE_SECURE"] is True
 
 
 def test_login_rate_limits_after_five_failed_attempts():
@@ -115,6 +130,40 @@ def test_login_rate_limits_after_five_failed_attempts():
         headers={"X-CSRF-Token": csrf},
     )
     assert throttled.status_code == 429
+
+
+def test_clerk_mode_rejects_sessions_and_disables_local_login(monkeypatch):
+    from app import security
+
+    monkeypatch.setenv("AUTH_MODE", "clerk")
+    client = create_app(testing=True).test_client()
+    with client.session_transaction() as flask_session:
+        flask_session["jarvis_user"] = "local-account"
+
+    assert client.get("/api/auth/login").status_code == 404
+    assert client.get("/api/stats").status_code == 401
+
+    monkeypatch.setattr(security, "_verify_clerk_token", lambda _token: "clerk:user-1")
+    response = client.get("/api/stats", headers={"Authorization": "Bearer test-token"})
+    assert response.status_code == 200
+
+
+def test_production_requires_clerk_auth_unless_explicitly_overridden(monkeypatch, caplog):
+    monkeypatch.setenv("JARVIS_ENV", "production")
+    monkeypatch.setenv("AUTH_MODE", "local")
+    monkeypatch.delenv("ALLOW_LOCAL_AUTH", raising=False)
+    with pytest.raises(RuntimeError, match="AUTH_MODE=clerk"):
+        validate_production_config()
+
+    monkeypatch.setenv("ALLOW_LOCAL_AUTH", "1")
+    monkeypatch.setenv("AUTH_ENABLED", "1")
+    monkeypatch.setenv("FLASK_SECRET", "synthetic-production-secret-0123456789abcdef")
+    monkeypatch.setenv("CORS_ORIGINS", "https://jarvis.example.test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://pooler.invalid/db")
+    monkeypatch.setenv("API_KEY_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    with caplog.at_level("CRITICAL", logger="jarvis.security"):
+        validate_production_config()
+    assert "ALLOW_LOCAL_AUTH=1 enables local password/TOTP auth in production" in caplog.text
 
 
 def test_proxyfix_trusts_forwarded_ip_only_when_hops_configured(monkeypatch):
@@ -161,6 +210,7 @@ def test_security_headers_and_explicit_cors(monkeypatch):
 
 def test_production_rejects_missing_or_weak_configuration(monkeypatch):
     monkeypatch.setenv("JARVIS_ENV", "production")
+    monkeypatch.setenv("AUTH_MODE", "clerk")
     monkeypatch.setenv("AUTH_ENABLED", "1")
     monkeypatch.setenv("FLASK_SECRET", "weak")
     monkeypatch.setenv("CORS_ORIGINS", "https://jarvis.example.test")
