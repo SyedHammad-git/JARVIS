@@ -96,8 +96,8 @@ def tool_get_weather(city="Faisalabad"):
     return "Weather unavailable, Sir."
 
 
-def tool_search_memory(query, top_k=5):
-    hits = search_facts_semantic(query, top_k=top_k)
+def tool_search_memory(query, top_k=5, owner_username=""):
+    hits = search_facts_semantic(query, top_k=top_k, owner_username=owner_username)
     if not hits:
         return "No stored facts matched that, Sir."
     return "\n".join(f"• {h['fact']} ({h['category']})" for h in hits)
@@ -148,5 +148,7 @@ register(Tool(
     },
     where="server",
     risk="low",
-    handler=lambda a: tool_search_memory(a.get("query", ""), a.get("top_k", 5)),
+    handler=lambda a, ctx=None: tool_search_memory(
+        a.get("query", ""), a.get("top_k", 5), (ctx or {}).get("owner_username", "")
+    ),
 ))

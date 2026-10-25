@@ -43,6 +43,7 @@ _SCHEMA: str = """
 -- Chat history
 CREATE TABLE IF NOT EXISTS conversations (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_username TEXT NOT NULL DEFAULT '',
     session_id  TEXT    NOT NULL DEFAULT 'default',
     role        TEXT    NOT NULL,
     content     TEXT    NOT NULL,
@@ -54,6 +55,7 @@ CREATE TABLE IF NOT EXISTS conversations (
 -- Notes
 CREATE TABLE IF NOT EXISTS notes (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_username TEXT NOT NULL DEFAULT '',
     title      TEXT NOT NULL DEFAULT '',
     content    TEXT NOT NULL,
     created_at TEXT NOT NULL,
@@ -63,6 +65,7 @@ CREATE TABLE IF NOT EXISTS notes (
 -- Alarms / reminders
 CREATE TABLE IF NOT EXISTS alarms (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_username TEXT NOT NULL DEFAULT '',
     time         TEXT    NOT NULL,
     label        TEXT    NOT NULL DEFAULT 'Reminder',
     repeat       TEXT    NOT NULL DEFAULT 'once',
@@ -76,6 +79,7 @@ CREATE TABLE IF NOT EXISTS alarms (
 -- Command audit log
 CREATE TABLE IF NOT EXISTS command_log (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_username TEXT NOT NULL DEFAULT '',
     command    TEXT    NOT NULL,
     result     TEXT    DEFAULT '',
     blocked    INTEGER DEFAULT 0,
@@ -86,6 +90,7 @@ CREATE TABLE IF NOT EXISTS command_log (
 -- System events
 CREATE TABLE IF NOT EXISTS events (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_username TEXT NOT NULL DEFAULT '',
     type       TEXT NOT NULL,
     message    TEXT NOT NULL,
     created_at TEXT NOT NULL
@@ -101,6 +106,7 @@ CREATE TABLE IF NOT EXISTS config (
 -- Long-term memory facts
 CREATE TABLE IF NOT EXISTS memory_facts (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_username TEXT NOT NULL DEFAULT '',
     category   TEXT    NOT NULL DEFAULT 'general',
     fact       TEXT    NOT NULL,
     source     TEXT    DEFAULT 'learned',
@@ -111,6 +117,7 @@ CREATE TABLE IF NOT EXISTS memory_facts (
 -- Heartbeat / proactive message log
 CREATE TABLE IF NOT EXISTS heartbeat_log (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_username TEXT NOT NULL DEFAULT '',
     trigger    TEXT    NOT NULL,
     message    TEXT    NOT NULL,
     priority   TEXT    DEFAULT 'medium',
@@ -121,6 +128,7 @@ CREATE TABLE IF NOT EXISTS heartbeat_log (
 -- Work-session statistics
 CREATE TABLE IF NOT EXISTS session_stats (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_username TEXT NOT NULL DEFAULT '',
     date            TEXT    NOT NULL,
     active_minutes  INTEGER DEFAULT 0,
     commands_given  INTEGER DEFAULT 0,
@@ -132,6 +140,7 @@ CREATE TABLE IF NOT EXISTS session_stats (
 -- Cameras
 CREATE TABLE IF NOT EXISTS cameras (
     id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_username TEXT NOT NULL DEFAULT '',
     name   TEXT    NOT NULL DEFAULT 'Camera',
     source TEXT    NOT NULL DEFAULT '0',
     active INTEGER NOT NULL DEFAULT 0
@@ -140,6 +149,7 @@ CREATE TABLE IF NOT EXISTS cameras (
 -- Monitors (url/timeout stored in config JSON)
 CREATE TABLE IF NOT EXISTS monitors (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_username TEXT NOT NULL DEFAULT '',
     name          TEXT    NOT NULL,
     type          TEXT    NOT NULL DEFAULT 'http',
     config        TEXT    NOT NULL DEFAULT '{}',
@@ -154,6 +164,7 @@ CREATE TABLE IF NOT EXISTS monitors (
 -- Monitor per-check log
 CREATE TABLE IF NOT EXISTS monitor_log (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_username TEXT NOT NULL DEFAULT '',
     monitor_id   INTEGER,
     monitor_name TEXT    DEFAULT '',
     result       TEXT    DEFAULT '',
@@ -219,6 +230,10 @@ CREATE TABLE IF NOT EXISTS pair_code_rate_limits (
     failures       INTEGER NOT NULL DEFAULT 0,
     locked_until   REAL NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS user_owners (
+    owner_username TEXT PRIMARY KEY
+);
 """
 
 
@@ -236,6 +251,7 @@ _POSTGRES_SCHEMA = postgres_schema_from_sqlite()
 _POSTGRES_SNAPSHOT_SCHEMA = """
 CREATE TABLE IF NOT EXISTS snapshots (
     snapshot_id TEXT PRIMARY KEY,
+    owner_username TEXT NOT NULL DEFAULT '',
     image BYTEA NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL
 );
@@ -245,6 +261,7 @@ _POSTGRES_VECTOR_SCHEMA = """
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE TABLE IF NOT EXISTS memory_vectors (
     id TEXT PRIMARY KEY,
+    owner_username TEXT NOT NULL DEFAULT '',
     content TEXT NOT NULL,
     meta JSONB NOT NULL DEFAULT '{}'::jsonb,
     embedding vector(768) NOT NULL,
@@ -291,21 +308,32 @@ def _sqlite_connect() -> sqlite3.Connection:
 # SQLite ADD COLUMN only allows a constant default (not datetime()).
 # Empty/zero defaults are backfilled immediately after ALTER below.
 _REQUIRED_COLUMNS: dict[str, list[tuple]] = {
-    "events":       [("created_at", "TEXT",    "''")],
+    "conversations": [("owner_username", "TEXT", "''"),
+                      ("created_at", "TEXT", "''"),
+                      ("tools_used", "TEXT", "''"),
+                      ("ai_model", "TEXT", "'groq'")],
+    "events":       [("owner_username", "TEXT", "''"),
+                     ("created_at", "TEXT",    "''")],
     "command_log":  [("created_at", "TEXT",    "''"),
+                     ("owner_username", "TEXT", "''"),
                      ("result",     "TEXT",    "''"),
                      ("blocked",    "INTEGER", "0"),
                      ("remote",     "INTEGER", "0")],
-    "conversations":[("created_at", "TEXT",    "''"),
-                     ("tools_used", "TEXT",    "''"),
-                     ("ai_model",   "TEXT",    "'groq'")],
-    "notes":        [("created_at", "TEXT",    "''"),
+    "notes":        [("owner_username", "TEXT", "''"),
+                     ("created_at", "TEXT",    "''"),
                      ("updated_at", "TEXT",    "''")],
     "config":       [("updated_at", "TEXT",    "''")],
-    "memory_facts": [("created_at", "TEXT",    "''"),
+    "memory_facts": [("owner_username", "TEXT", "''"),
+                     ("created_at", "TEXT",    "''"),
                      ("last_used",  "TEXT",    "''")],
-    "heartbeat_log":[("created_at", "TEXT",    "''")],
-    "alarms":       [("created_at", "TEXT",    "''")],
+    "heartbeat_log":[("owner_username", "TEXT", "''"),
+                     ("created_at", "TEXT",    "''")],
+    "session_stats":[("owner_username", "TEXT", "''")],
+    "cameras":      [("owner_username", "TEXT", "''")],
+    "alarms":       [("owner_username", "TEXT", "''"),
+                     ("created_at", "TEXT",    "''")],
+    "monitors":     [("owner_username", "TEXT", "''")],
+    "monitor_log":  [("owner_username", "TEXT", "''")],
     "devices":      [("owner_username", "TEXT", "''"),
                      ("scopes", "TEXT", "'{}'")],
     "user_api_keys": [("key_version", "INTEGER", "1"),
@@ -374,11 +402,23 @@ def _sqlite_migrate(conn: sqlite3.Connection) -> None:
                         f"WHERE {col_name} IS NULL OR {col_name} = ''"
                     )
 
-    for table in ("devices", "user_api_keys", "pairing_codes", "pending_confirmations"):
+    for table in ("devices", "user_api_keys", "pairing_codes", "pending_confirmations",
+                  "conversations", "notes", "alarms", "command_log", "events",
+                  "memory_facts", "monitors", "monitor_log", "heartbeat_log",
+                  "session_stats", "cameras"):
         conn.execute(
             f"UPDATE {table} SET owner_username='clerk:' || owner_username "
             f"WHERE owner_username<>'' AND owner_username NOT LIKE 'clerk:%' "
             f"AND NOT EXISTS (SELECT 1 FROM users WHERE users.username={table}.owner_username)"
+        )
+    for table in (
+        "conversations", "notes", "alarms", "memory_facts", "monitors",
+        "monitor_log", "command_log", "events", "heartbeat_log", "session_stats",
+        "cameras", "devices", "user_api_keys", "pairing_codes", "pending_confirmations",
+    ):
+        conn.execute(
+            f"INSERT OR IGNORE INTO user_owners(owner_username) "
+            f"SELECT DISTINCT owner_username FROM {table} WHERE owner_username<>''"
         )
     conn.commit()
 
@@ -542,6 +582,8 @@ def _sqlite_scalar(sql: str, params: tuple = ()):
 # ════════════════════════════════════════════════════════════════════
 _pg_pool      = None
 _pg_pool_lock = Lock()
+_registered_owners: set[tuple[str, str]] = set()
+_registered_owners_lock = Lock()
 PG_CONNECT_RETRIES = 3
 PG_RETRY_DELAYS = (0.25, 0.5)
 
@@ -608,8 +650,25 @@ def _postgres_init() -> None:
                     "totp_secret TEXT NOT NULL, created_at TEXT NOT NULL, "
                     "disabled INTEGER NOT NULL DEFAULT 0)"
                 )
+                cur.execute(
+                    "CREATE TABLE IF NOT EXISTS user_owners (owner_username TEXT PRIMARY KEY)"
+                )
                 cur.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS owner_username TEXT NOT NULL DEFAULT ''")
                 cur.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS scopes TEXT NOT NULL DEFAULT '{}'")
+                for table in (
+                    "conversations", "notes", "alarms", "command_log", "events",
+                    "memory_facts", "monitors", "monitor_log", "heartbeat_log",
+                    "session_stats", "cameras",
+                ):
+                    cur.execute(
+                        f"ALTER TABLE IF EXISTS {table} "
+                        "ADD COLUMN IF NOT EXISTS owner_username TEXT NOT NULL DEFAULT ''"
+                    )
+                for table in ("snapshots", "memory_vectors"):
+                    cur.execute(
+                        f"ALTER TABLE IF EXISTS {table} "
+                        "ADD COLUMN IF NOT EXISTS owner_username TEXT NOT NULL DEFAULT ''"
+                    )
                 cur.execute(
                     "CREATE TABLE IF NOT EXISTS user_api_keys ("
                     "owner_username TEXT NOT NULL, provider TEXT NOT NULL, "
@@ -648,11 +707,33 @@ def _postgres_init() -> None:
                 )
                 cur.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS owner_username TEXT NOT NULL DEFAULT ''")
                 cur.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS scopes TEXT NOT NULL DEFAULT '{}'")
-                for table in ("devices", "user_api_keys", "pairing_codes", "pending_confirmations"):
+                for table in (
+                    "devices", "user_api_keys", "pairing_codes", "pending_confirmations",
+                    "conversations", "notes", "alarms", "command_log", "events",
+                    "memory_facts", "monitors", "monitor_log", "snapshots", "memory_vectors",
+                    "heartbeat_log", "session_stats", "cameras",
+                ):
+                    cur.execute("SELECT to_regclass(%s)", (f"public.{table}",))
+                    if not cur.fetchone()[0]:
+                        continue
                     cur.execute(
                         f"UPDATE {table} SET owner_username='clerk:' || owner_username "
                         f"WHERE owner_username<>'' AND owner_username NOT LIKE 'clerk:%' "
                         f"AND NOT EXISTS (SELECT 1 FROM users WHERE users.username={table}.owner_username)"
+                    )
+                for table in (
+                    "conversations", "notes", "alarms", "memory_facts", "monitors",
+                    "monitor_log", "command_log", "events", "heartbeat_log", "session_stats",
+                    "cameras", "devices", "user_api_keys", "pairing_codes",
+                    "pending_confirmations", "snapshots", "memory_vectors",
+                ):
+                    cur.execute("SELECT to_regclass(%s)", (f"public.{table}",))
+                    if not cur.fetchone()[0]:
+                        continue
+                    cur.execute(
+                        f"INSERT INTO user_owners(owner_username) "
+                        f"SELECT DISTINCT owner_username FROM {table} WHERE owner_username<>'' "
+                        "ON CONFLICT(owner_username) DO NOTHING"
                     )
             conn.commit()
         except Exception as exc:
@@ -891,6 +972,24 @@ def db_scalar(sql: str, params: tuple = ()):
     if DB_BACKEND == "sqlite":    return _sqlite_scalar(sql, params)
     if DB_BACKEND == "postgres":  return _postgres_scalar(sql, params)
     raise NotImplementedError(f"db_scalar: unknown backend {DB_BACKEND}")
+
+
+def register_owner(owner_username: str) -> None:
+    owner = str(owner_username or "").strip()
+    if not owner:
+        return
+    namespace = f"{DB_BACKEND}:{DB_PATH}" if DB_BACKEND == "sqlite" else DB_BACKEND
+    cache_key = (namespace, owner)
+    with _registered_owners_lock:
+        if cache_key in _registered_owners:
+            return
+        if not db_write(
+            "INSERT INTO user_owners(owner_username) VALUES(?) "
+            "ON CONFLICT(owner_username) DO NOTHING",
+            (owner,),
+        ):
+            raise RuntimeError("Could not register authenticated owner")
+        _registered_owners.add(cache_key)
 
 
 def cfg_get(key: str, default: str = "") -> str:

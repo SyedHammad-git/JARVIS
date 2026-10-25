@@ -24,11 +24,14 @@ smarthome_devices = _load_devices()
 def save_devices():
     cfg_set("smarthome_devices", json.dumps(smarthome_devices))
 
-def toggle_device(device_id: str, force_state=None) -> dict:
+def toggle_device(device_id: str, force_state=None, owner_username: str = "") -> dict:
     dev = smarthome_devices.get(device_id)
     if dev is None: return None
     new_state = force_state if force_state is not None else (not dev["state"])
     dev["state"] = new_state
     save_devices()
-    add_alert(f"SmartHome: {dev['name']} {'ON' if new_state else 'OFF'}")
+    add_alert(
+        f"SmartHome: {dev['name']} {'ON' if new_state else 'OFF'}",
+        owner_username=owner_username,
+    )
     return dev

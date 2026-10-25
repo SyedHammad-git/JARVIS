@@ -84,9 +84,10 @@ def create_app(
     from app.routes.data_routes import data
     from app.routes.iot_routes import iot
     from app.routes.system_routes import system
+    from app.routes.webhook_routes import webhooks
     from flask import jsonify
 
-    for blueprint in (auth, core, ai, system, data, iot, devices_bp, keys_bp):
+    for blueprint in (auth, core, ai, system, data, iot, devices_bp, keys_bp, webhooks):
         app.register_blueprint(blueprint)
 
     socketio.init_app(app)

@@ -16,6 +16,7 @@ PUBLIC_API_PATHS = {
     "/api/ping",
     "/api/health",
     "/api/auth/login",
+    "/api/webhooks/clerk",
 }
 CSRF_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 _clerk_jwks_clients = {}
@@ -196,6 +197,10 @@ def install_api_security(app) -> None:
                 response = jsonify({"ok": False, "error": "csrf_validation_failed"})
                 response.status_code = 403
                 return response
+        from app.db import register_owner
+        from app.neural import register_heartbeat_owner
+        register_owner(username)
+        register_heartbeat_owner(username)
         return None
 
     @app.after_request

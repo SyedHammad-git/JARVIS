@@ -1,9 +1,12 @@
 """Server-side heartbeat, Discord, and weather routes."""
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 
-from app.config import discord_cfg, heartbeat_cfg, heartbeat_queue, heartbeat_lock
+from app.config import discord_cfg
 from app.db import cfg_set, db_read
 from app.error_utils import api_errors
+from app.neural import (
+    get_heartbeat_config, get_heartbeat_queue, update_heartbeat_config,
+)
 from app.notifications import send_discord_alert
 from app.tools.server_tools import tool_get_weather
 
@@ -17,18 +20,22 @@ def heartbeat_status():
         return "", 204
     if request.method == "POST":
         body = request.get_json(silent=True) or {}
-        if "enabled" in body:
-            heartbeat_cfg["enabled"] = bool(body["enabled"])
-        with heartbeat_lock:
-            pending = list(heartbeat_queue)
-        return jsonify({"ok": True, "config": heartbeat_cfg, "pending": pending})
-    with heartbeat_lock:
-        pending = list(heartbeat_queue)
+        updates = {
+            key: body[key] for key in ("enabled", "interval", "coding_break_mins")
+            if key in body
+        }
+        if "enabled" in updates:
+            updates["enabled"] = bool(updates["enabled"])
+        config = update_heartbeat_config(g.current_user["username"], updates)
+        pending = get_heartbeat_queue(g.current_user["username"])
+        return jsonify({"ok": True, "config": config, "pending": pending})
+    config = get_heartbeat_config(g.current_user["username"])
+    pending = get_heartbeat_queue(g.current_user["username"])
     return jsonify({
-        "enabled": heartbeat_cfg.get("enabled"),
-        "interval_min": heartbeat_cfg.get("interval", 30),
-        "last_run": heartbeat_cfg.get("last_run", 0),
-        "silence_until": heartbeat_cfg.get("silence_until", 0),
+        "enabled": config.get("enabled"),
+        "interval_min": config.get("interval", 30),
+        "last_run": config.get("last_run", 0),
+        "silence_until": config.get("silence_until", 0),
         "pending": pending,
         "pending_count": len(pending),
     })
@@ -37,9 +44,7 @@ def heartbeat_status():
 @system.route("/api/heartbeat/poll", methods=["GET"])
 @api_errors
 def heartbeat_poll():
-    with heartbeat_lock:
-        messages = list(heartbeat_queue)
-        heartbeat_queue.clear()
+    messages = get_heartbeat_queue(g.current_user["username"], clear=True)
     return jsonify({"messages": messages, "count": len(messages)})
 
 
@@ -50,18 +55,25 @@ def heartbeat_config_route():
         return "", 204
     if request.method == "POST":
         body = request.get_json(silent=True) or {}
-        for key in ("enabled", "interval", "coding_break_mins"):
-            if key in body:
-                heartbeat_cfg[key] = body[key]
-        return jsonify({"ok": True, "config": heartbeat_cfg})
-    return jsonify(heartbeat_cfg)
+        updates = {
+            key: body[key] for key in ("enabled", "interval", "coding_break_mins")
+            if key in body
+        }
+        if "enabled" in updates:
+            updates["enabled"] = bool(updates["enabled"])
+        return jsonify({
+            "ok": True,
+            "config": update_heartbeat_config(g.current_user["username"], updates),
+        })
+    return jsonify(get_heartbeat_config(g.current_user["username"]))
 
 
 @system.route("/api/heartbeat/log", methods=["GET"])
 @api_errors
 def heartbeat_log():
     rows = db_read(
-        "SELECT * FROM events WHERE type='heartbeat' ORDER BY id DESC LIMIT 50"
+        "SELECT * FROM events WHERE owner_username=? AND type='heartbeat' ORDER BY id DESC LIMIT 50",
+        (g.current_user["username"],),
     )
     return jsonify({"log": rows, "count": len(rows)})
 

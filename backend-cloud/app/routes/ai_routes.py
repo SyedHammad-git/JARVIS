@@ -7,14 +7,19 @@ from flask import Blueprint, g, jsonify, request
 from app.config import (
     ai_router_state, ai_router_lock,
     work_session, work_session_lock,
-    heartbeat_cfg, heartbeat_queue, heartbeat_lock
 )
 from app.db import db_read, db_write, db_write_returning
 from app.devices.gateway import first_online_device
 from app.ai.agent import run_agent, tool_confirmation_signature
 from app.ai.engine import call_gemini, route_ai_call, build_jarvis_context, AGENT_SYS_BASE
 from app.key_store import KeyStorageUnavailable, user_api_key_context
-from app.neural import neural_state, neural_lock, push_system_event
+from app.neural import (
+    get_heartbeat_queue,
+    neural_lock,
+    owner_neural_state,
+    push_system_event,
+    update_heartbeat_config,
+)
 from app.notifications import send_os_notification
 from app.error_utils import api_errors
 
@@ -62,10 +67,9 @@ def _agent_chat_with_user_key_context():
     owner = g.current_user["username"]
     requested_device_id = str(data.get("device_id") or "").strip()
     device_id = requested_device_id or first_online_device(owner)
-    scoped_session_id = f"{owner}:{str(session_id)[:120]}"
     result = run_agent(
         user_input,
-        session_id=scoped_session_id,
+        session_id=session_id,
         ctx={
             "confirmed": confirmed,
             "confirmed_signature": confirmed_signature,
@@ -117,9 +121,11 @@ def _agent_chat_with_user_key_context():
 @api_errors
 def agent_clear():
     if request.method == "OPTIONS": return "", 204
-    session_id = (request.get_json(silent=True) or {}).get("session_id","default")
-    scoped_session_id = f"{g.current_user['username']}:{str(session_id)[:120]}"
-    db_write("DELETE FROM conversations WHERE session_id=?", (scoped_session_id,))
+    session_id = str((request.get_json(silent=True) or {}).get("session_id", "default"))[:120]
+    db_write(
+        "DELETE FROM conversations WHERE owner_username=? AND session_id=?",
+        (g.current_user["username"], session_id),
+    )
     return jsonify({"ok": True, "message": "Conversation cleared, Sir."})
 
 
@@ -142,7 +148,7 @@ def neural_endpoint():
 
             if not any(get_api_key(name) for name in ("GROQ_KEY", "GEMINI_KEY", "OPENROUTER_KEY")):
                 return jsonify({"ok": False, "error": "no_api_key"}), 400
-            ctx = build_jarvis_context()
+            ctx = build_jarvis_context(g.current_user["username"])
             messages = [
                 {"role": "system", "content": AGENT_SYS_BASE + "\n" + ctx},
                 {"role": "user", "content": text},
@@ -151,9 +157,10 @@ def neural_endpoint():
     except KeyStorageUnavailable:
         return jsonify({"ok": False, "error": "api_key_storage_unavailable"}), 503
     with neural_lock:
-        neural_state["last_cmd"]   = text
-        neural_state["last_reply"] = reply
-        neural_state["conv_state"] = "idle"
+        state = owner_neural_state(g.current_user["username"])
+        state["last_cmd"] = text
+        state["last_reply"] = reply
+        state["conv_state"] = "idle"
     return jsonify({"ok": True, "reply": reply, "model": model})
 
 
@@ -191,9 +198,11 @@ def ai_gemini():
 def neural_activate():
     if request.method == "OPTIONS": return "", 204
     with neural_lock:
-        neural_state["active"]     = True
-        neural_state["conv_state"] = "idle"
-    push_system_event("neural","Neural Mode activated, Sir.")
+        state = owner_neural_state(g.current_user["username"])
+        state["active"] = True
+        state["conv_state"] = "idle"
+    push_system_event("neural", "Neural Mode activated, Sir.",
+                      owner_username=g.current_user["username"])
     return jsonify({"ok": True, "active": True})
 
 
@@ -202,8 +211,9 @@ def neural_activate():
 def neural_deactivate():
     if request.method == "OPTIONS": return "", 204
     with neural_lock:
-        neural_state["active"]     = False
-        neural_state["conv_state"] = "idle"
+        state = owner_neural_state(g.current_user["username"])
+        state["active"] = False
+        state["conv_state"] = "idle"
     return jsonify({"ok": True, "active": False})
 
 
@@ -211,7 +221,7 @@ def neural_deactivate():
 @api_errors
 def neural_status():
     with neural_lock:
-        snap = {k: v for k, v in neural_state.items() if k != "event_queue"}
+        snap = dict(owner_neural_state(g.current_user["username"]))
     return jsonify(snap)
 
 
@@ -220,7 +230,9 @@ def neural_status():
 def neural_silence():
     if request.method == "OPTIONS": return "", 204
     minutes = (request.get_json(silent=True) or {}).get("minutes", 30)
-    heartbeat_cfg["silence_until"] = time.time() + minutes * 60
+    update_heartbeat_config(
+        g.current_user["username"], {"silence_until": time.time() + minutes * 60}
+    )
     return jsonify({"ok": True, "silenced_for_minutes": minutes})
 
 
@@ -230,7 +242,7 @@ def neural_conv_state():
     if request.method == "OPTIONS": return "", 204
     state = (request.get_json(silent=True) or {}).get("state","idle")
     with neural_lock:
-        neural_state["conv_state"] = state
+        owner_neural_state(g.current_user["username"])["conv_state"] = state
     return jsonify({"ok": True, "conv_state": state})
 
 
@@ -254,16 +266,24 @@ def speak():
 @api_errors
 def events_poll():
     with neural_lock:
-        events = list(neural_state.get("event_queue",[]))
-        neural_state["event_queue"] = []
-    with heartbeat_lock:
-        hb = list(heartbeat_queue)
-        heartbeat_queue.clear()
+        owner = g.current_user["username"]
+        events = [
+            event for event in neural_state.get("event_queue", [])
+            if event.get("owner_username") == owner
+        ]
+        neural_state["event_queue"] = [
+            event for event in neural_state.get("event_queue", [])
+            if event.get("owner_username") != owner
+        ]
+    hb = get_heartbeat_queue(g.current_user["username"], clear=True)
     return jsonify({"events": events, "heartbeat": hb, "count": len(events)+len(hb)})
 
 
 @ai.route("/api/system/events", methods=["GET"])
 @api_errors
 def system_events():
-    rows = db_read("SELECT * FROM events ORDER BY id DESC LIMIT 50")
+    rows = db_read(
+        "SELECT * FROM events WHERE owner_username=? ORDER BY id DESC LIMIT 50",
+        (g.current_user["username"],),
+    )
     return jsonify({"events": rows, "count": len(rows)})

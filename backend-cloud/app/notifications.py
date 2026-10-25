@@ -10,7 +10,9 @@ from app.db import db_read, db_write, ts
 
 log = logging.getLogger("jarvis.notifications")
 
-def send_discord_alert(message: str, image_path: str = None) -> bool:
+def send_discord_alert(
+    message: str, image_path: str = None, owner_username: str = ""
+) -> bool:
     if not REQUESTS_OK: return False
     url = discord_cfg.get("webhook_url", "").strip()
     if not url or not url.startswith("https://discord.com/api/webhooks/"): return False
@@ -32,8 +34,8 @@ def send_discord_alert(message: str, image_path: str = None) -> bool:
         if ok:
             threading.Thread(
                 target=db_write,
-                args=("INSERT INTO events(type,message,created_at) VALUES(?,?,?)",
-                      ("discord", message[:200], ts())),
+                args=("INSERT INTO events(owner_username,type,message,created_at) VALUES(?,?,?,?)",
+                      (owner_username, "discord", message[:200], ts())),
                 daemon=True
             ).start()
         return ok

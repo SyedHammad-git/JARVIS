@@ -41,20 +41,23 @@ def _vector_literal(embedding: list[float]) -> str:
     return "[" + ",".join(format(value, ".8g") for value in embedding) + "]"
 
 
-def add_memory(memory_id: str, content: str, meta: dict | None = None) -> bool:
+def add_memory(memory_id: str, content: str, meta: dict | None = None,
+               owner_username: str = "") -> bool:
     if DB_BACKEND != "postgres":
         return False
     embedding = embed_text(content)
     if embedding is None:
         return False
     return db_write(
-        "INSERT INTO memory_vectors(id,content,meta,embedding) VALUES(?,?,?::jsonb,?::vector) "
-        "ON CONFLICT(id) DO UPDATE SET content=EXCLUDED.content,meta=EXCLUDED.meta,embedding=EXCLUDED.embedding",
-        (str(memory_id), content, json.dumps(meta or {}), _vector_literal(embedding)),
+        "INSERT INTO memory_vectors(id,owner_username,content,meta,embedding) "
+        "VALUES(?,?,?,?::jsonb,?::vector) "
+        "ON CONFLICT(id) DO UPDATE SET owner_username=EXCLUDED.owner_username,"
+        "content=EXCLUDED.content,meta=EXCLUDED.meta,embedding=EXCLUDED.embedding",
+        (str(memory_id), owner_username, content, json.dumps(meta or {}), _vector_literal(embedding)),
     )
 
 
-def search(query: str, top_k: int = 5) -> list[dict]:
+def search(query: str, top_k: int = 5, owner_username: str = "") -> list[dict]:
     if DB_BACKEND != "postgres":
         return []
     embedding = embed_text(query)
@@ -63,8 +66,8 @@ def search(query: str, top_k: int = 5) -> list[dict]:
     vector = _vector_literal(embedding)
     rows = db_read(
         "SELECT id,content,meta,(embedding <=> ?::vector) AS distance "
-        "FROM memory_vectors ORDER BY embedding <=> ?::vector LIMIT ?",
-        (vector, vector, max(1, min(int(top_k), 50))),
+        "FROM memory_vectors WHERE owner_username=? ORDER BY embedding <=> ?::vector LIMIT ?",
+        (vector, owner_username, vector, max(1, min(int(top_k), 50))),
     )
     return [
         {
@@ -77,7 +80,8 @@ def search(query: str, top_k: int = 5) -> list[dict]:
     ]
 
 
-def delete_memory(memory_id: str) -> bool:
+def delete_memory(memory_id: str, owner_username: str = "") -> bool:
     if DB_BACKEND != "postgres":
         return False
-    return db_write("DELETE FROM memory_vectors WHERE id=?", (str(memory_id),))
+    return db_write("DELETE FROM memory_vectors WHERE id=? AND owner_username=?",
+                    (str(memory_id), owner_username))

@@ -40,6 +40,11 @@ def is_online(device_id: str | None) -> bool:
         return device_id in _sid_by_device
 
 
+def online_device_ids() -> list[str]:
+    with _map_lock:
+        return list(_sid_by_device)
+
+
 def first_online_device(owner_username: str) -> str | None:
     for device in list_devices(owner_username):
         device_id = device.get("device_id")
@@ -182,9 +187,11 @@ class DeviceNamespace(Namespace):
             data = {"message": str(data)}
         msg = str(data.get("message") or data.get("msg") or kind)[:300]
         log.info("device inbound kind=%s device_id=%s", kind, device_id)
-        add_alert(f"Device {device_id}: {msg}")
+        device = get_device(device_id)
+        owner = str((device or {}).get("owner_username") or "")
+        add_alert(f"Device {device_id}: {msg}", owner_username=owner)
         try:
-            send_discord_alert(f"[{kind}] {device_id}: {msg}")
+            send_discord_alert(f"[{kind}] {device_id}: {msg}", owner_username=owner)
         except Exception:
             pass
 

@@ -77,6 +77,26 @@ when applying schema changes. SQLite remains the local fallback.
 ChromaDB has been removed; Neon uses pgvector for semantic memory, with SQL
 keyword search retained whenever embeddings or pgvector are unavailable.
 
+### Per-user data and legacy ownership
+
+Conversations, notes, alarms, memory facts/vectors, monitors and their history,
+command logs, events, and snapshots are stored with the authenticated
+`owner_username`. Clerk identities use the `clerk:<subject>` namespace; local
+accounts keep their local username. Run the ownership assignment script once
+for any pre-isolation database. Review the counts first, then repeat without
+`--dry-run` to assign unowned rows and legacy SQLite snapshot files:
+
+```powershell
+$env:OWNER_USERNAME = "the-owner-identity"
+py scripts/assign_legacy_owner.py --dry-run
+py scripts/assign_legacy_owner.py
+```
+
+For Clerk account deletion, configure the Clerk webhook endpoint as
+`/api/webhooks/clerk` and set `CLERK_WEBHOOK_SECRET` in the backend environment.
+The endpoint accepts only Svix-signed requests and purges data for the deleted
+Clerk subject.
+
 ---
 
 ## Device gateway (Socket.IO)

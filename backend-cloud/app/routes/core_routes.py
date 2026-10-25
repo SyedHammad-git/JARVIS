@@ -14,7 +14,7 @@ from app.config import (
     GROQ_KEY, GEMINI_KEY, OPENROUTER_KEY,
     ai_router_state, ai_router_lock,
     work_session, work_session_lock,
-    discord_cfg, heartbeat_cfg, heartbeat_queue, heartbeat_lock
+    discord_cfg
 )
 import app.db as database
 from app.db import db_read, db_scalar, ts
@@ -32,15 +32,16 @@ core = Blueprint("core", __name__)
 _STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 _DB_HEALTH_CACHE_TTL = 30
 _db_health_cache_lock = Lock()
-_db_health_cache = {"checked_at": 0.0, "backend": None, "payload": None}
+_db_health_cache = {"checked_at": 0.0, "backend": None, "owner": None, "payload": None}
 
 
-def _database_health_snapshot(now: float | None = None) -> dict:
+def _database_health_snapshot(owner_username: str = "", now: float | None = None) -> dict:
     instant = time.monotonic() if now is None else now
     backend = database.DB_BACKEND
     with _db_health_cache_lock:
         cached = _db_health_cache
         if (cached["payload"] is not None and cached["backend"] == backend
+                and cached["owner"] == owner_username
                 and instant - cached["checked_at"] < _DB_HEALTH_CACHE_TTL):
             return dict(cached["payload"])
 
@@ -50,7 +51,10 @@ def _database_health_snapshot(now: float | None = None) -> dict:
         vector_rows = None
         if backend == "postgres":
             try:
-                counts = db_read("SELECT COUNT(*) AS count FROM memory_vectors")
+                counts = db_read(
+                    "SELECT COUNT(*) AS count FROM memory_vectors WHERE owner_username=?",
+                    (owner_username,),
+                )
                 if counts:
                     vector_rows = int(counts[0].get("count", 0))
             except Exception:
@@ -62,24 +66,30 @@ def _database_health_snapshot(now: float | None = None) -> dict:
             "pgvector_row_count": vector_rows,
             "sqlite_fallback_active": bool(database.SQLITE_FALLBACK_ACTIVE),
         }
-        _db_health_cache.update(checked_at=instant, backend=backend, payload=payload)
+        _db_health_cache.update(
+            checked_at=instant, backend=backend, owner=owner_username, payload=payload
+        )
         return dict(payload)
 
 
-def _pulse() -> dict:
+def _pulse(owner_username: str = "") -> dict:
     sh_on      = sum(1 for d in _sh.smarthome_devices.values() if d.get("state"))
-    mon_cnt    = db_scalar("SELECT COUNT(*) FROM monitors WHERE active=1") or 0
-    with heartbeat_lock:
-        hb_len = len(heartbeat_queue)
+    mon_cnt    = db_scalar(
+        "SELECT COUNT(*) FROM monitors WHERE owner_username=? AND active=1",
+        (owner_username,),
+    ) or 0
+    heartbeat_config = _neu.get_heartbeat_config(owner_username)
+    hb_len = len(_neu.get_heartbeat_queue(owner_username))
     with _neu.neural_lock:
-        nm_active = _neu.neural_state.get("active", False)
-        nm_mode   = _neu.neural_state.get("mode", "normal")
+        owner_state = _neu.owner_neural_state(owner_username)
+        nm_active = owner_state.get("active", False)
+        nm_mode   = owner_state.get("mode", "normal")
     return {
         "smarthome_on":      sh_on,
         "smarthome_total":   len(_sh.smarthome_devices),
         "monitor_active":    mon_cnt,
         "heartbeat_pending": hb_len,
-        "heartbeat_enabled": heartbeat_cfg.get("enabled", True),
+        "heartbeat_enabled": heartbeat_config.get("enabled", True),
         "ai_active":         ai_router_state.get("active", "groq"),
         "neural_active":     nm_active,
         "neural_mode":       nm_mode,
@@ -118,10 +128,15 @@ def ping():
 def stats():
     with stat_lock:
         snap = dict(cache)
+        owner = g.current_user["username"]
+        snap["alerts"] = [
+            alert for alert in snap.get("alerts", [])
+            if alert.get("owner_username") == owner
+        ]
     uptime       = int(time.time() - _server_start)
     snap["uptime"]     = uptime
     snap["uptime_str"] = f"{uptime//3600}h {(uptime%3600)//60}m"
-    snap["pulse"]      = _pulse()
+    snap["pulse"]      = _pulse(g.current_user["username"])
     with ai_router_lock:
         snap["ai_router"] = {
             "active":     ai_router_state.get("active"),
@@ -142,7 +157,7 @@ def stats():
 @core.route("/api/pulse")
 @api_errors
 def pulse():
-    return jsonify(_pulse())
+    return jsonify(_pulse(g.current_user["username"]))
 
 
 @core.route("/api/command", methods=["POST","OPTIONS"])
@@ -200,14 +215,23 @@ def health():
     return jsonify(_health_payload())
 
 
-def _online_device_count() -> int:
+def _online_device_count(owner_username: str | None = "") -> int:
     from app.devices.gateway import is_online
-    devices = db_read("SELECT device_id FROM devices WHERE revoked=0")
+    if owner_username is None:
+        from app.devices.gateway import online_device_ids
+        return len(online_device_ids())
+    devices = db_read(
+        "SELECT device_id FROM devices WHERE owner_username=? AND revoked=0",
+        (owner_username,),
+    )
     return sum(1 for device in devices if is_online(device.get("device_id")))
 
 
 def _health_payload() -> dict:
-    health = _database_health_snapshot()
+    owner = getattr(g, "current_user", {}).get("username")
+    if owner is None:
+        owner = ""
+    health = _database_health_snapshot(owner)
     return {
         "status": "ok" if health["db_ok"] else "degraded",
         "version": "v17.M",
@@ -216,7 +240,9 @@ def _health_payload() -> dict:
         "neon_select_1_latency_ms": health["neon_select_1_latency_ms"],
         "pgvector_row_count": health["pgvector_row_count"],
         "sqlite_fallback_active": health["sqlite_fallback_active"],
-        "online_device_count": _online_device_count(),
+        "online_device_count": _online_device_count(
+            getattr(g, "current_user", {}).get("username")
+        ),
     }
 
 

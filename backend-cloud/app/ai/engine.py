@@ -121,10 +121,13 @@ SAFETY: Use only the tools supplied with this request. Never invent tool results
 CONTEXT (injected automatically):"""
 
 
-def build_jarvis_context() -> str:
+def build_jarvis_context(owner_username: str = "") -> str:
     now          = datetime.datetime.now()
     session_mins = int((time.time() - work_session["start"]) / 60)
-    facts        = db_read("SELECT fact FROM memory_facts ORDER BY last_used DESC LIMIT 5")
+    facts        = db_read(
+        "SELECT fact FROM memory_facts WHERE owner_username=? ORDER BY last_used DESC LIMIT 5",
+        (owner_username,),
+    )
     facts_str    = " | ".join(f.get("fact", "") for f in facts) if facts else "No stored facts"
     return (
         f"Time: {now.strftime('%H:%M')} | Day: {now.strftime('%A')} | "

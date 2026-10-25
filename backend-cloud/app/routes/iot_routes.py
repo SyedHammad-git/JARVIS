@@ -3,7 +3,7 @@ J.A.R.V.I.S v17.M — IoT Routes Blueprint
 FIXED: C2 monitor_add uses config JSON, C3 monitor_status reads from JSON config
 """
 import json, logging
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 from app.db import db_read, db_write, ts
 from app.auth import add_alert
 from app.smarthome import (
@@ -34,7 +34,9 @@ def smarthome_toggle(device_id):
     if request.method == "OPTIONS": return "", 204
     body        = request.get_json(silent=True) or {}
     force_state = body.get("state")
-    updated     = toggle_device(device_id, force_state=force_state)
+    updated     = toggle_device(
+        device_id, force_state=force_state, owner_username=g.current_user["username"]
+    )
     if updated is None:
         return jsonify({"error":f"Device '{device_id}' not found"}), 404
     return jsonify({"ok": True, "device": updated})
@@ -45,8 +47,11 @@ def smarthome_all():
     if request.method == "OPTIONS": return "", 204
     state = bool((request.get_json(silent=True) or {}).get("state", False))
     for dev_id in smarthome_devices:
-        toggle_device(dev_id, force_state=state)
-    add_alert(f"SmartHome: All {'ON' if state else 'OFF'}")
+        toggle_device(dev_id, force_state=state, owner_username=g.current_user["username"])
+    add_alert(
+        f"SmartHome: All {'ON' if state else 'OFF'}",
+        owner_username=g.current_user["username"],
+    )
     return jsonify({"ok": True, "state": state, "devices": smarthome_devices})
 
 @iot.route("/api/smarthome/add", methods=["POST","OPTIONS"])
@@ -79,7 +84,7 @@ def smarthome_remove(device_id):
 @iot.route("/api/monitor/list", methods=["GET"])
 @api_errors
 def monitor_list():
-    rows = get_monitor_cache()
+    rows = get_monitor_cache(g.current_user["username"])
     return jsonify({"monitors": rows, "count": len(rows), "engine": monitor_engine_running})
 
 @iot.route("/api/monitor/add", methods=["POST","OPTIONS"])
@@ -97,11 +102,12 @@ def monitor_add():
     # ✅ FIX C2: store url/timeout in config JSON column, not as separate columns
     cfg_json = json.dumps({"url": url, "timeout": timeout})
     added = db_write(
-        "INSERT INTO monitors(name,type,config,status,created_at,active) VALUES(?,?,?,'running',?,1)",
-        (name, typ, cfg_json, ts())
+        "INSERT INTO monitors(owner_username,name,type,config,status,created_at,active) "
+        "VALUES(?,?,?,?,'running',?,1)",
+        (g.current_user["username"], name, typ, cfg_json, ts())
     )
     if added:
-        invalidate_monitor_cache()
+        invalidate_monitor_cache(g.current_user["username"])
     return jsonify({"ok": True, "message":f"Monitor added: {name}"})
 
 @iot.route("/api/monitor/pause", methods=["POST","OPTIONS"])
@@ -112,10 +118,10 @@ def monitor_pause():
     mon_id = body.get("id")
     paused = bool(body.get("paused", True))
     if mon_id is None: return jsonify({"error":"No id"}), 400
-    updated = db_write("UPDATE monitors SET status=? WHERE id=?",
-                       ("paused" if paused else "running", mon_id))
+    updated = db_write("UPDATE monitors SET status=? WHERE id=? AND owner_username=?",
+                       ("paused" if paused else "running", mon_id, g.current_user["username"]))
     if updated:
-        invalidate_monitor_cache()
+        invalidate_monitor_cache(g.current_user["username"])
     return jsonify({"ok": True, "paused": paused})
 
 @iot.route("/api/monitor/delete", methods=["POST","OPTIONS"])
@@ -124,9 +130,10 @@ def monitor_delete():
     if request.method == "OPTIONS": return "", 204
     mon_id = (request.get_json(silent=True) or {}).get("id")
     if mon_id is None: return jsonify({"error":"No id"}), 400
-    updated = db_write("UPDATE monitors SET active=0 WHERE id=?", (mon_id,))
+    updated = db_write("UPDATE monitors SET active=0 WHERE id=? AND owner_username=?",
+                       (mon_id, g.current_user["username"]))
     if updated:
-        invalidate_monitor_cache()
+        invalidate_monitor_cache(g.current_user["username"])
     return jsonify({"ok": True})
 
 @iot.route("/api/monitor/log", methods=["GET"])
@@ -134,18 +141,27 @@ def monitor_delete():
 def monitor_log():
     mon_id = request.args.get("id")
     limit  = min(int(request.args.get("limit",100)), 500)
+    owner = g.current_user["username"]
     if mon_id:
-        rows = db_read("SELECT * FROM monitor_log WHERE monitor_id=? ORDER BY id DESC LIMIT ?",
-                       (mon_id, limit))
+        rows = db_read(
+            "SELECT * FROM monitor_log WHERE owner_username=? AND monitor_id=? ORDER BY id DESC LIMIT ?",
+            (owner, mon_id, limit),
+        )
     else:
-        rows = db_read("SELECT * FROM monitor_log ORDER BY id DESC LIMIT ?", (limit,))
+        rows = db_read(
+            "SELECT * FROM monitor_log WHERE owner_username=? ORDER BY id DESC LIMIT ?",
+            (owner, limit),
+        )
     return jsonify({"log": rows, "count": len(rows)})
 
 @iot.route("/api/monitor/status", methods=["GET"])
 @api_errors
 def monitor_status():
     """✅ FIX C3: parse url/timeout from config JSON, don't select non-existent columns."""
-    rows = [monitor for monitor in get_monitor_cache() if monitor.get("active", 1)]
+    rows = [
+        monitor for monitor in get_monitor_cache(g.current_user["username"])
+        if monitor.get("active", 1)
+    ]
     result = []
     for r in rows:
         try:   cfg = json.loads(r.get("config","{}") or "{}")

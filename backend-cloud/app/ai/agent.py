@@ -99,7 +99,10 @@ def execute_tool(name: str, args: dict, ctx: dict | None = None) -> str:
             confirmed=bool(ctx.get("confirmed")),
             confirmation_nonce=ctx.get("confirmation_nonce"),
         )
-        return snapshot_ack_to_text(ack, (args or {}).get("question", ""))
+        return snapshot_ack_to_text(
+            ack, (args or {}).get("question", ""),
+            owner_username=str(ctx.get("owner_username") or ""),
+        )
 
     if tool.where == "device":
         from app.devices.gateway import call_device
@@ -122,7 +125,7 @@ def execute_tool(name: str, args: dict, ctx: dict | None = None) -> str:
         return json.dumps({"ok": False, "error": "unknown_action", "tool": name})
 
     try:
-        result = fn(args or {})
+        result = fn(args or {}, ctx) if name == "search_memory" else fn(args or {})
         with _last_action_lock:
             _last_action_registry[sig] = time.time()
         return truncate_tool_result(result)
@@ -163,7 +166,8 @@ def _run_agent_inner(user_input: str, session_id: str, max_steps: int, ctx: dict
         device_online = is_online(device_id)
 
     schemas = llm_schemas(device_online=bool(device_online), device_id=device_id)
-    sys_prompt = AGENT_SYS_BASE + "\n" + build_jarvis_context()
+    owner_username = str(ctx.get("owner_username") or "")
+    sys_prompt = AGENT_SYS_BASE + "\n" + build_jarvis_context(owner_username)
     if not device_online:
         sys_prompt += (
             "\nDEVICE STATUS: the paired PC is offline (device_offline). "
@@ -171,7 +175,7 @@ def _run_agent_inner(user_input: str, session_id: str, max_steps: int, ctx: dict
             "Do not claim you opened apps or ran local actions."
         )
 
-    history = load_recent_messages(session_id, limit=10)
+    history = load_recent_messages(session_id, limit=10, owner_username=owner_username)
     messages = [{"role": "system", "content": sys_prompt}]
     messages.extend({"role": r["role"], "content": r["content"]} for r in history)
     messages.append({"role": "user", "content": user_input})
@@ -237,9 +241,9 @@ def _run_agent_inner(user_input: str, session_id: str, max_steps: int, ctx: dict
 
             final = result.get("text") or "Task complete, Sir."
             tools_str = ",".join(set(s["tool"] for s in steps))
-            save_message(session_id, "user", user_input, tools_str, model_used)
-            save_message(session_id, "assistant", final, tools_str, model_used)
-            prune_conversation(session_id, keep_last=100)
+            save_message(session_id, "user", user_input, tools_str, model_used, owner_username)
+            save_message(session_id, "assistant", final, tools_str, model_used, owner_username)
+            prune_conversation(session_id, keep_last=100, owner_username=owner_username)
             log.info("[AGENT] Done in %d step(s) | Model: %s", i + 1, model_used)
             return {"ok": True, "reply": final, "steps": steps,
                     "iterations": i + 1, "model": model_used}

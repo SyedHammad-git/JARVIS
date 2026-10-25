@@ -26,10 +26,20 @@ def _statements(schema: str):
 
 
 def _schemas():
+    owner_migration = "\n".join(
+        f"ALTER TABLE IF EXISTS {table} "
+        "ADD COLUMN IF NOT EXISTS owner_username TEXT NOT NULL DEFAULT '';"
+        for table in (
+            "conversations", "notes", "alarms", "command_log", "events",
+            "memory_facts", "monitors", "monitor_log", "snapshots", "memory_vectors",
+            "heartbeat_log", "session_stats", "cameras",
+        )
+    )
     return (
         database._POSTGRES_SCHEMA,
         database._POSTGRES_SNAPSHOT_SCHEMA,
         getattr(database, "_POSTGRES_VECTOR_SCHEMA", ""),
+        owner_migration,
     )
 
 

@@ -7,6 +7,7 @@ import datetime
 import secrets
 import threading
 import time
+import hashlib
 from collections import deque
 from pathlib import Path
 
@@ -22,22 +23,50 @@ def cleanup_snapshots(
     image_dir: Path | None = None,
     now: float | None = None,
     backend: str | None = None,
+    owner_username: str | None = None,
 ) -> None:
     active_backend = (backend or database.DB_BACKEND).lower()
     if active_backend == "postgres":
         current_time = time.time() if now is None else now
         expires_before = datetime.datetime.fromtimestamp(current_time, datetime.timezone.utc)
-        database.db_write("DELETE FROM snapshots WHERE expires_at <= ?", (expires_before,))
+        owners = (
+            [owner_username] if owner_username is not None else [
+                row["owner_username"] for row in database.db_read(
+                    "SELECT owner_username FROM user_owners ORDER BY owner_username"
+                )
+            ]
+        )
+        for owner in owners:
+            database.db_write(
+                "DELETE FROM snapshots WHERE owner_username=? AND expires_at <= ?",
+                (owner, expires_before),
+            )
         return
 
     directory = Path(image_dir or SNAPSHOT_DIR)
     if not directory.is_dir():
         return
     current_time = time.time() if now is None else now
+    if image_dir is None:
+        if owner_username is None:
+            owners = [
+                row["owner_username"] for row in database.db_read(
+                    "SELECT owner_username FROM user_owners ORDER BY owner_username"
+                )
+            ]
+        else:
+            owners = [owner_username]
+        directories = [
+            directory / hashlib.sha256(owner.encode("utf-8")).hexdigest()[:24]
+            for owner in owners
+        ]
+    else:
+        directories = [directory]
     try:
-        for image_path in directory.glob("img_*.jpg"):
-            if current_time - image_path.stat().st_mtime >= SNAPSHOT_TTL_SECONDS:
-                image_path.unlink(missing_ok=True)
+        for owner_directory in directories:
+            for image_path in owner_directory.rglob("img_*.jpg"):
+                if current_time - image_path.stat().st_mtime >= SNAPSHOT_TTL_SECONDS:
+                    image_path.unlink(missing_ok=True)
     except OSError:
         pass
 
@@ -47,25 +76,51 @@ def save_snapshot(
     image_bytes: bytes,
     image_dir: Path | None = None,
     backend: str | None = None,
+    owner_username: str = "",
 ) -> bool:
     active_backend = (backend or database.DB_BACKEND).lower()
-    cleanup_snapshots(image_dir=image_dir, backend=active_backend)
+    cleanup_snapshots(
+        image_dir=image_dir,
+        backend=active_backend,
+        owner_username=owner_username,
+    )
     if active_backend == "postgres":
         expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
             seconds=SNAPSHOT_TTL_SECONDS
         )
         return database.db_write(
-            "INSERT INTO snapshots(snapshot_id,image,expires_at) VALUES(?,?,?)",
-            (snapshot_id, image_bytes, expires_at),
+            "INSERT INTO snapshots(snapshot_id,owner_username,image,expires_at) VALUES(?,?,?,?)",
+            (snapshot_id, owner_username, image_bytes, expires_at),
         )
 
     directory = Path(image_dir or SNAPSHOT_DIR)
     try:
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory / f"{snapshot_id}.jpg").write_bytes(image_bytes)
+        if owner_username:
+            owner_dir = hashlib.sha256(owner_username.encode("utf-8")).hexdigest()[:24]
+            snapshot_path = directory / owner_dir / f"{snapshot_id}.jpg"
+        else:
+            snapshot_path = directory / f"{snapshot_id}.jpg"
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot_path.write_bytes(image_bytes)
         return True
     except OSError:
         return False
+
+
+def purge_owner_snapshots(owner_username: str) -> None:
+    if database.DB_BACKEND == "postgres":
+        database.db_write("DELETE FROM snapshots WHERE owner_username=?", (owner_username,))
+        return
+    owner_dir = hashlib.sha256(owner_username.encode("utf-8")).hexdigest()[:24]
+    directory = SNAPSHOT_DIR / owner_dir
+    if not directory.is_dir():
+        return
+    for image_path in directory.glob("img_*.jpg"):
+        image_path.unlink(missing_ok=True)
+    try:
+        directory.rmdir()
+    except OSError:
+        pass
 
 
 class SnapshotRateLimiter:
@@ -95,7 +150,13 @@ class SnapshotRateLimiter:
 snapshot_rate_limiter = SnapshotRateLimiter()
 
 
-def snapshot_ack_to_text(ack: dict, question: str, image_dir: Path | None = None, vision_fn=None) -> str:
+def snapshot_ack_to_text(
+    ack: dict,
+    question: str,
+    image_dir: Path | None = None,
+    vision_fn=None,
+    owner_username: str = "",
+) -> str:
     if not isinstance(ack, dict):
         return "Camera snapshot failed."
     if ack.get("ok") is False:
@@ -118,7 +179,9 @@ def snapshot_ack_to_text(ack: dict, question: str, image_dir: Path | None = None
         return "Camera snapshot rejected: invalid JPEG image."
 
     snapshot_id = f"img_{secrets.token_urlsafe(9)}"
-    if not save_snapshot(snapshot_id, image_bytes, image_dir=image_dir):
+    if not save_snapshot(
+        snapshot_id, image_bytes, image_dir=image_dir, owner_username=owner_username
+    ):
         return "Camera snapshot could not be stored."
 
     if vision_fn is None:

@@ -19,9 +19,9 @@ def _load_database():
     return db
 
 
-def _add_memory(memory_id, fact, metadata):
+def _add_memory(memory_id, fact, metadata, owner_username):
     from app.vector.pg_store import add_memory
-    return add_memory(memory_id, fact, metadata)
+    return add_memory(memory_id, fact, metadata, owner_username)
 
 
 def main(argv=None) -> int:
@@ -38,7 +38,7 @@ def main(argv=None) -> int:
         print("Backfill requires DB_BACKEND=postgres on the Neon dev branch.")
         return 2
 
-    sql = "SELECT id,fact,category,source FROM memory_facts ORDER BY id"
+    sql = "SELECT id,owner_username,fact,category,source FROM memory_facts ORDER BY id"
     params = ()
     if args.limit > 0:
         sql += " LIMIT ?"
@@ -48,7 +48,9 @@ def main(argv=None) -> int:
     skipped = 0
     for row in facts:
         metadata = {"category": row.get("category", "general"), "source": row.get("source", "learned")}
-        if _add_memory(str(row["id"]), row["fact"], metadata):
+        if _add_memory(
+            str(row["id"]), row["fact"], metadata, row.get("owner_username", "")
+        ):
             added += 1
         else:
             skipped += 1
