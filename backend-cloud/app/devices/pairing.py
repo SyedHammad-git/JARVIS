@@ -33,7 +33,10 @@ def hash_token(token: str) -> str:
 
 
 def create_pair_code(owner_username: str, name: str = "PC") -> tuple[str, float]:
-    db_write("DELETE FROM pairing_codes WHERE expires_at<=?", (time.time(),))
+    db_write(
+        "DELETE FROM pairing_codes WHERE owner_username=? OR expires_at<=?",
+        (owner_username, time.time()),
+    )
     for _ in range(5):
         code = "".join(secrets.choice(PAIR_CODE_ALPHABET) for _ in range(8))
         expires_at = time.time() + PAIR_CODE_TTL_SECONDS
@@ -47,9 +50,19 @@ def create_pair_code(owner_username: str, name: str = "PC") -> tuple[str, float]
 
 
 def redeem_pair_code(code: str) -> tuple[str, str, str] | None:
+    supplied_hash = hash_token(code)
+    candidate_hashes = db_read(
+        "SELECT code_hash FROM pairing_codes WHERE expires_at>?",
+        (time.time(),),
+    )
+    matches = False
+    for candidate in candidate_hashes:
+        matches = hmac.compare_digest(str(candidate["code_hash"]), supplied_hash) or matches
+    if not matches:
+        return None
     rows = db_write_returning(
         "DELETE FROM pairing_codes WHERE code_hash=? AND expires_at>? RETURNING owner_username,name",
-        (hash_token(code), time.time()),
+        (supplied_hash, time.time()),
     )
     if not rows:
         return None
@@ -139,7 +152,7 @@ def device_scope_allows(device: dict, action: str, args: dict | None = None) -> 
 
 def get_device(device_id: str) -> dict | None:
     rows = db_read(
-        "SELECT device_id, name, token_hash, revoked, created_at, last_seen "
+        "SELECT device_id, name, token_hash, owner_username, scopes, revoked, created_at, last_seen "
         "FROM devices WHERE device_id=?",
         (device_id,),
     )

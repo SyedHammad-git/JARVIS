@@ -1,4 +1,5 @@
-"""AI package for the cloud backend split."""
+"""AI package for the cloud backend split.
 
-from .agent import *  # noqa: F401,F403
-from .engine import *  # noqa: F401,F403
+Submodules are intentionally not imported here: agent, memory, and engine
+depend on one another and eager re-exports make import order observable.
+"""

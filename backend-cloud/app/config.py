@@ -4,6 +4,7 @@ FIXED: H3 secret key, M1 GEMINI_URL, M2 work_session lock, M4 ai_router lock
 """
 import os
 import secrets
+import logging
 from contextvars import ContextVar
 import time
 from threading import Lock
@@ -61,14 +62,46 @@ _API_KEY_ENV_SNAPSHOT = {
     name: os.environ.get(name) for name in _API_KEY_NAMES
 }
 _user_api_keys: ContextVar[dict[str, str] | None] = ContextVar("user_api_keys", default=None)
+_key_log = logging.getLogger("jarvis.config")
+_server_fallback_warning_logged = False
+
+def server_key_fallback_enabled() -> bool:
+    return os.environ.get("SERVER_FALLBACK_KEYS", "").strip() == "1"
+
+
+def multi_user_mode() -> bool:
+    return (
+        os.environ.get("JARVIS_ENV", "").strip().lower() == "production"
+        or bool(os.environ.get("CLERK_ISSUER", "").strip())
+    )
+
+
+def _warn_server_fallback_enabled() -> None:
+    global _server_fallback_warning_logged
+    if server_key_fallback_enabled() and not _server_fallback_warning_logged:
+        _key_log.warning(
+            "SERVER_FALLBACK_KEYS=1: server-wide provider keys are enabled for all users and system tasks"
+        )
+        _server_fallback_warning_logged = True
+
+
+_warn_server_fallback_enabled()
 
 
 def get_api_key(name: str) -> str:
     if name not in _API_KEY_NAMES:
         raise ValueError(f"Unsupported API key name: {name}")
+    _warn_server_fallback_enabled()
+    fallback_enabled = server_key_fallback_enabled()
     user_keys = _user_api_keys.get()
-    if user_keys is not None and user_keys.get(name):
-        return user_keys[name]
+    if user_keys is not None:
+        user_key = user_keys.get(name, "")
+        if user_key:
+            return user_key
+        if not fallback_enabled:
+            return ""
+    elif multi_user_mode() and not fallback_enabled:
+        return ""
     value = os.environ.get(name)
     if value != _API_KEY_ENV_SNAPSHOT[name]:
         return value or ""
@@ -97,8 +130,8 @@ def refresh_api_keys() -> None:
 GROQ_URL   = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
-# ✅ FIX M1: Build Gemini URL dynamically using a function so runtime key changes work
-# and empty keys don't produce malformed ?key= URLs
+# Build the Gemini URL dynamically so runtime key changes work and empty keys
+# do not produce malformed ?key= URLs.
 def get_gemini_url(pro: bool = False, key: str | None = None) -> str:
     if key is None:
         key = get_api_key("GEMINI_KEY")
@@ -109,7 +142,7 @@ def get_gemini_url(pro: bool = False, key: str | None = None) -> str:
 OPENROUTER_URL   = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "anthropic/claude-haiku-5.5"
 
-# Keep these for backward compat — but callers should prefer get_gemini_url()
+# Keep these for backward compatibility — callers should prefer get_gemini_url().
 GEMINI_URL     = get_gemini_url(pro=False)
 GEMINI_PRO_URL = get_gemini_url(pro=True)
 
@@ -117,13 +150,13 @@ def _check_api_keys():
     missing = [name for name in ("GROQ_KEY", "GEMINI_KEY", "OPENROUTER_KEY")
                if not get_api_key(name)]
     if missing:
-        print(f"[CONFIG] ⚠  Missing .env keys: {', '.join(missing)}")
+        print(f"[CONFIG] [WARN] Missing provider keys: {', '.join(missing)}")
     else:
-        print("[CONFIG] ✅ All AI keys loaded")
+        print("[CONFIG] [INFO] All AI keys loaded")
     if get_api_key("WEATHER_KEY"):
-        print("[CONFIG] ✅ WEATHER_KEY active (OpenWeatherMap)")
+        print("[CONFIG] [INFO] WEATHER_KEY active (OpenWeatherMap)")
     else:
-        print("[CONFIG] ⚠  WEATHER_KEY missing — wttr.in fallback active")
+        print("[CONFIG] [WARN] WEATHER_KEY missing; wttr.in fallback active")
 
 _check_api_keys()
 
@@ -132,11 +165,11 @@ _env_pin = os.environ.get("JARVIS_PIN", "").strip()
 if _env_pin and _env_pin.isdigit():
     if not cfg_get("pin", ""):
         cfg_set("pin", _env_pin)
-        print("[CONFIG] ✅ PIN loaded from .env")
+        print("[CONFIG] [INFO] PIN loaded from environment")
 else:
     if not cfg_get("pin", ""):
         cfg_set("pin", "1234")
-        print("[CONFIG] ⚠  Default PIN 1234 set — change via /api/pin/change")
+        print("[CONFIG] [WARN] Default PIN 1234 set; change via /api/pin/change")
 
 # ── ✅ FIX H3: SECRET_KEY — never use a known fallback in production ─
 # Generate a random key and store it in DB so it survives restarts
@@ -144,7 +177,7 @@ _stored_secret = cfg_get("flask_secret", "")
 if not _stored_secret:
     _stored_secret = secrets.token_hex(32)
     cfg_set("flask_secret", _stored_secret)
-    print("[CONFIG] ✅ Flask SECRET_KEY generated and stored in DB")
+    print("[CONFIG] [INFO] Flask SECRET_KEY generated and stored in DB")
 FLASK_SECRET = os.environ.get("FLASK_SECRET", _stored_secret)
 
 # ── Locks ─────────────────────────────────────────────────────────
@@ -187,7 +220,7 @@ _db_webhook  = cfg_get("discord_webhook_url", "")
 if _env_webhook and not _db_webhook:
     cfg_set("discord_webhook_url", _env_webhook)
     cfg_set("discord_enabled", "true")
-    print("[CONFIG] ✅ DISCORD_WEBHOOK loaded from .env")
+    print("[CONFIG] [INFO] DISCORD_WEBHOOK loaded from environment")
 
 discord_cfg = {
     "webhook_url": _db_webhook or _env_webhook,

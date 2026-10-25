@@ -9,6 +9,7 @@ from app.key_store import (
     delete_user_key,
     list_user_keys,
     save_user_key,
+    update_key_test_status,
 )
 
 keys_bp = Blueprint("keys", __name__)
@@ -75,9 +76,15 @@ def keys_test(provider):
     if not isinstance(key, str) or not key.strip() or len(key) > 512:
         return jsonify({"ok": False, "error": "invalid_key"}), 400
     try:
-        valid = _probe(provider, key.strip())
+        supplied_key = key.strip()
+        valid = _probe(provider, supplied_key)
+        update_key_test_status(g.current_user["username"], provider, supplied_key, valid)
     except ProviderUnavailable:
         return jsonify({"ok": False, "error": "provider_unavailable"}), 502
+    except KeyStorageUnavailable:
+        return jsonify({"ok": False, "error": "api_key_storage_unavailable"}), 503
+    except RuntimeError:
+        return jsonify({"ok": False, "error": "api_key_storage_failed"}), 503
     return jsonify({"ok": True, "valid": valid})
 
 

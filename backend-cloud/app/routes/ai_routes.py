@@ -12,6 +12,7 @@ from app.config import (
 from app.db import db_read, db_write, db_write_returning
 from app.ai.agent import run_agent, tool_confirmation_signature
 from app.ai.engine import call_gemini, route_ai_call, build_jarvis_context, AGENT_SYS_BASE
+from app.key_store import KeyStorageUnavailable, user_api_key_context
 from app.neural import neural_state, neural_lock, push_system_event
 from app.notifications import send_os_notification
 from app.error_utils import api_errors
@@ -24,9 +25,17 @@ ai  = Blueprint("ai", __name__)
 @api_errors
 def agent_chat():
     if request.method == "OPTIONS": return "", 204
+    try:
+        with user_api_key_context(g.current_user["username"]):
+            return _agent_chat_with_user_key_context()
+    except KeyStorageUnavailable:
+        return jsonify({"ok": False, "error": "api_key_storage_unavailable"}), 503
+
+
+def _agent_chat_with_user_key_context():
     from app.config import get_api_key
     if not any(get_api_key(name) for name in ("GROQ_KEY", "GEMINI_KEY", "OPENROUTER_KEY")):
-        return jsonify({"ok": False, "error": "no_api_key"}), 428
+        return jsonify({"ok": False, "error": "no_api_key"}), 400
     data       = request.get_json(silent=True) or {}
     user_input = (data.get("message") or data.get("text") or data.get("input") or "").strip()
     if not user_input:
@@ -123,12 +132,20 @@ def neural_endpoint():
         work_session["last_active"]     = time.time()
         work_session["commands_count"] += 1
 
-    ctx      = build_jarvis_context()
-    messages = [
-        {"role":"system","content": AGENT_SYS_BASE + "\n" + ctx},
-        {"role":"user",  "content": text}
-    ]
-    reply, model, _ = route_ai_call(messages, task_type="chat")
+    try:
+        with user_api_key_context(g.current_user["username"]):
+            from app.config import get_api_key
+
+            if not any(get_api_key(name) for name in ("GROQ_KEY", "GEMINI_KEY", "OPENROUTER_KEY")):
+                return jsonify({"ok": False, "error": "no_api_key"}), 400
+            ctx = build_jarvis_context()
+            messages = [
+                {"role": "system", "content": AGENT_SYS_BASE + "\n" + ctx},
+                {"role": "user", "content": text},
+            ]
+            reply, model, _ = route_ai_call(messages, task_type="chat")
+    except KeyStorageUnavailable:
+        return jsonify({"ok": False, "error": "api_key_storage_unavailable"}), 503
     with neural_lock:
         neural_state["last_cmd"]   = text
         neural_state["last_reply"] = reply
@@ -153,7 +170,15 @@ def ai_gemini():
     img_b64 = data.get("image_base64")
     if not prompt:
         return jsonify({"error": "No prompt provided"}), 400
-    result = call_gemini(prompt, image_base64=img_b64)
+    try:
+        with user_api_key_context(g.current_user["username"]):
+            from app.config import get_api_key
+
+            if not get_api_key("GEMINI_KEY"):
+                return jsonify({"ok": False, "error": "no_api_key"}), 400
+            result = call_gemini(prompt, image_base64=img_b64)
+    except KeyStorageUnavailable:
+        return jsonify({"ok": False, "error": "api_key_storage_unavailable"}), 503
     return jsonify(result)
 
 

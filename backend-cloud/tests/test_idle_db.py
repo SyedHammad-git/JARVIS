@@ -173,7 +173,13 @@ def test_alarm_creation_invalidates_cache_and_new_alarm_is_loaded(monkeypatch):
 
 def test_device_revoke_invalidates_cache_and_call_device_refuses_immediately(monkeypatch):
     read_count = []
-    row = {"device_id": "dev-cache-test", "revoked": 0, "token_hash": "hash"}
+    row = {
+        "device_id": "dev-cache-test",
+        "revoked": 0,
+        "token_hash": "hash",
+        "owner_username": "owner",
+        "scopes": '{"allow_open_app": true}',
+    }
     monkeypatch.setattr(pairing, "db_read", lambda _sql, _params: read_count.append(True) or [dict(row)])
     monkeypatch.setattr(pairing, "get_device", lambda _device_id: dict(row))
     monkeypatch.setattr(pairing, "db_write", lambda _sql, _params: True)
@@ -187,7 +193,12 @@ def test_device_revoke_invalidates_cache_and_call_device_refuses_immediately(mon
     assert pairing.revoke_device("dev-cache-test")
     assert pairing.get_device_status_cached("dev-cache-test")["revoked"] == 1
     assert len(read_count) == 1
-    assert gateway.call_device("dev-cache-test", "open_app", {"target": "notepad"}) == {
+    assert gateway.call_device(
+        "dev-cache-test",
+        "open_app",
+        {"target": "notepad"},
+        owner_username="owner",
+    ) == {
         "ok": False,
         "error": "device_revoked",
     }
@@ -220,7 +231,17 @@ def test_device_status_endpoint_polls_are_served_from_cache(monkeypatch):
     app.register_blueprint(devices_http.devices_bp)
     monkeypatch.setattr(devices_http, "EXECUTION_MODE", "remote")
     monkeypatch.setattr(devices_http, "DEVICE_ID", "dev-status-test")
+    monkeypatch.setattr(devices_http, "get_device", lambda _device_id: {
+        "device_id": "dev-status-test",
+        "owner_username": "status-owner",
+        "token_hash": "test-hash",
+    })
     client = app.test_client()
+    @app.before_request
+    def authenticate_status_owner():
+        from flask import g
+
+        g.current_user = {"username": "status-owner"}
 
     assert client.get("/api/device/status").get_json()["revoked"] is False
     assert client.get("/api/device/status").get_json()["revoked"] is False

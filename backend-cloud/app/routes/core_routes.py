@@ -7,7 +7,7 @@ import logging
 from threading import Lock
 from pathlib import Path
 
-from flask import Blueprint, jsonify, request, send_from_directory
+from flask import Blueprint, g, jsonify, request, send_from_directory
 
 from app.config import (
     cache, stat_lock, _server_start,
@@ -21,6 +21,7 @@ from app.db import db_read, db_scalar, ts
 from app.auth import sec_log_count
 from app.command import cmd_route
 from app.ai.agent import run_agent
+from app.key_store import KeyStorageUnavailable, user_api_key_context
 
 # ✅ FIX L5: import module-level objects once at module load, not inside _pulse() on every call
 import app.monitor as _mon
@@ -176,7 +177,17 @@ def do_command():
         return jsonify({"reply": cmd_result["result"], "source": "cmd_router"})
 
     session_id = data.get("session_id", "default")
-    result     = run_agent(raw, session_id=session_id)
+    try:
+        with user_api_key_context(g.current_user["username"]):
+            from app.config import get_api_key
+
+            if not any(get_api_key(name) for name in ("GROQ_KEY", "GEMINI_KEY", "OPENROUTER_KEY")):
+                return jsonify({"ok": False, "error": "no_api_key"}), 400
+            result = run_agent(raw, session_id=session_id, ctx={
+                "owner_username": g.current_user["username"],
+            })
+    except KeyStorageUnavailable:
+        return jsonify({"ok": False, "error": "api_key_storage_unavailable"}), 503
     return jsonify({
         "reply":  result.get("reply", ""),
         "steps":  result.get("steps", []),

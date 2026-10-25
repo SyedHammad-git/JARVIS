@@ -186,6 +186,10 @@ CREATE TABLE IF NOT EXISTS user_api_keys (
     owner_username TEXT NOT NULL,
     provider       TEXT NOT NULL,
     encrypted_key  TEXT NOT NULL,
+    key_version    INTEGER NOT NULL DEFAULT 1,
+    last4          TEXT NOT NULL DEFAULT '',
+    status         TEXT NOT NULL DEFAULT 'saved',
+    last_tested_at TEXT NOT NULL DEFAULT '',
     updated_at     TEXT NOT NULL,
     PRIMARY KEY (owner_username, provider)
 );
@@ -205,6 +209,15 @@ CREATE TABLE IF NOT EXISTS pending_confirmations (
     tool_signature TEXT NOT NULL,
     expires_at     REAL NOT NULL,
     PRIMARY KEY (owner_username, session_id)
+);
+
+CREATE TABLE IF NOT EXISTS pair_code_rate_limits (
+    rate_key       TEXT PRIMARY KEY,
+    window_start   REAL NOT NULL,
+    attempts       INTEGER NOT NULL DEFAULT 0,
+    failure_window REAL NOT NULL DEFAULT 0,
+    failures       INTEGER NOT NULL DEFAULT 0,
+    locked_until   REAL NOT NULL DEFAULT 0
 );
 """
 
@@ -295,6 +308,10 @@ _REQUIRED_COLUMNS: dict[str, list[tuple]] = {
     "alarms":       [("created_at", "TEXT",    "''")],
     "devices":      [("owner_username", "TEXT", "''"),
                      ("scopes", "TEXT", "'{}'")],
+    "user_api_keys": [("key_version", "INTEGER", "1"),
+                      ("last4", "TEXT", "''"),
+                      ("status", "TEXT", "'saved'"),
+                      ("last_tested_at", "TEXT", "''")],
 }
 
 # legacy column names that may hold timestamp data in old DBs
@@ -357,6 +374,12 @@ def _sqlite_migrate(conn: sqlite3.Connection) -> None:
                         f"WHERE {col_name} IS NULL OR {col_name} = ''"
                     )
 
+    for table in ("devices", "user_api_keys", "pairing_codes", "pending_confirmations"):
+        conn.execute(
+            f"UPDATE {table} SET owner_username='clerk:' || owner_username "
+            f"WHERE owner_username<>'' AND owner_username NOT LIKE 'clerk:%' "
+            f"AND NOT EXISTS (SELECT 1 FROM users WHERE users.username={table}.owner_username)"
+        )
     conn.commit()
 
 
@@ -368,7 +391,7 @@ def _sqlite_init() -> None:
             conn.commit()
             _sqlite_migrate(conn)   # add missing columns to existing DBs
             log.info("SQLite ready: %s", DB_PATH)
-            print(f"[DB] ✅ SQLite ready: {DB_PATH}")
+            print(f"[DB] [OK] SQLite ready: {DB_PATH}")
         finally:
             conn.close()
 
@@ -590,9 +613,15 @@ def _postgres_init() -> None:
                 cur.execute(
                     "CREATE TABLE IF NOT EXISTS user_api_keys ("
                     "owner_username TEXT NOT NULL, provider TEXT NOT NULL, "
-                    "encrypted_key TEXT NOT NULL, updated_at TEXT NOT NULL, "
+                    "encrypted_key TEXT NOT NULL, key_version INTEGER NOT NULL DEFAULT 1, "
+                    "last4 TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'saved', "
+                    "last_tested_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL, "
                     "PRIMARY KEY (owner_username, provider))"
                 )
+                cur.execute("ALTER TABLE user_api_keys ADD COLUMN IF NOT EXISTS key_version INTEGER NOT NULL DEFAULT 1")
+                cur.execute("ALTER TABLE user_api_keys ADD COLUMN IF NOT EXISTS last4 TEXT NOT NULL DEFAULT ''")
+                cur.execute("ALTER TABLE user_api_keys ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'saved'")
+                cur.execute("ALTER TABLE user_api_keys ADD COLUMN IF NOT EXISTS last_tested_at TEXT NOT NULL DEFAULT ''")
                 cur.execute(
                     "CREATE TABLE IF NOT EXISTS pairing_codes ("
                     "code_hash TEXT PRIMARY KEY, owner_username TEXT NOT NULL, "
@@ -606,6 +635,12 @@ def _postgres_init() -> None:
                     "PRIMARY KEY (owner_username, session_id))"
                 )
                 cur.execute(
+                    "CREATE TABLE IF NOT EXISTS pair_code_rate_limits ("
+                    "rate_key TEXT PRIMARY KEY, window_start DOUBLE PRECISION NOT NULL, "
+                    "attempts INTEGER NOT NULL DEFAULT 0, failure_window DOUBLE PRECISION NOT NULL DEFAULT 0, "
+                    "failures INTEGER NOT NULL DEFAULT 0, locked_until DOUBLE PRECISION NOT NULL DEFAULT 0)"
+                )
+                cur.execute(
                     "CREATE TABLE IF NOT EXISTS users ("
                     "username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, "
                     "totp_secret TEXT NOT NULL, created_at TEXT NOT NULL, "
@@ -613,6 +648,12 @@ def _postgres_init() -> None:
                 )
                 cur.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS owner_username TEXT NOT NULL DEFAULT ''")
                 cur.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS scopes TEXT NOT NULL DEFAULT '{}'")
+                for table in ("devices", "user_api_keys", "pairing_codes", "pending_confirmations"):
+                    cur.execute(
+                        f"UPDATE {table} SET owner_username='clerk:' || owner_username "
+                        f"WHERE owner_username<>'' AND owner_username NOT LIKE 'clerk:%' "
+                        f"AND NOT EXISTS (SELECT 1 FROM users WHERE users.username={table}.owner_username)"
+                    )
             conn.commit()
         except Exception as exc:
             if _is_pg_connection_error(exc):
@@ -624,7 +665,7 @@ def _postgres_init() -> None:
 
     try:
         _retry_pg_connection(check_connection)
-        print("[DB] ✅ PostgreSQL ready")
+        print("[DB] [OK] PostgreSQL ready")
         log.info("PostgreSQL ready")
     except Exception as exc:
         log.error("PostgreSQL init failed (%s)", type(exc).__name__)

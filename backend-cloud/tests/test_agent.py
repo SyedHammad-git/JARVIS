@@ -107,7 +107,14 @@ class AgentLoopTests(unittest.TestCase):
                 {"target": "notepad"},
                 {"execution_mode": "remote", "device_id": "dev_live", "confirmed": True},
             )
-        mock_call.assert_called_once_with("dev_live", "open_app", {"target": "notepad"})
+        mock_call.assert_called_once_with(
+            "dev_live",
+            "open_app",
+            {"target": "notepad"},
+            owner_username=None,
+            confirmed=True,
+            confirmation_nonce=None,
+        )
         data = json.loads(raw)
         self.assertTrue(data["ok"])
         self.assertEqual(data["message"], "fake executed")

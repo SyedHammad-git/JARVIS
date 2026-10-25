@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 import logging
+import hashlib
 import re
-import threading
 import time
-from collections import defaultdict, deque
 
 from flask import Blueprint, g, jsonify, request
 
 from app.config import DEVICE_ID, EXECUTION_MODE
+from app.db import db_write, db_write_returning
 from app.devices.gateway import is_online
 from app.devices.pairing import (
     get_device,
@@ -26,9 +26,83 @@ from app.error_utils import api_errors
 log = logging.getLogger("jarvis.devices")
 
 devices_bp = Blueprint("devices", __name__)
-_pair_attempt_lock = threading.Lock()
-_pair_attempts: dict[str, deque[float]] = defaultdict(deque)
 _PAIR_CODE_RE = re.compile(r"^[A-HJ-NP-Z2-9]{8}$")
+_PAIR_IP_WINDOW = 300
+_PAIR_IP_LIMIT = 10
+_PAIR_GLOBAL_WINDOW = 60
+_PAIR_GLOBAL_LIMIT = 120
+_PAIR_FAILURE_LIMIT = 5
+_PAIR_LOCKOUT_SECONDS = 900
+
+
+def _increment_pair_attempt(rate_key: str, now: float, window: int) -> dict:
+    rows = db_write_returning(
+        "INSERT INTO pair_code_rate_limits(rate_key,window_start,attempts,failure_window,failures,locked_until) "
+        "VALUES(?,?,1,?,0,0) ON CONFLICT(rate_key) DO UPDATE SET "
+        "attempts=CASE WHEN ?-pair_code_rate_limits.window_start>=? THEN 1 "
+        "ELSE pair_code_rate_limits.attempts+1 END,"
+        "window_start=CASE WHEN ?-pair_code_rate_limits.window_start>=? THEN ? "
+        "ELSE pair_code_rate_limits.window_start END "
+        "RETURNING attempts,locked_until",
+        (rate_key, now, now, now, window, now, window, now),
+    )
+    if not rows:
+        raise RuntimeError("pair_code_rate_limit_unavailable")
+    return rows[0]
+
+
+def _pair_ip_rate_key(client_ip: str) -> str:
+    return "ip:" + hashlib.sha256(client_ip.encode("utf-8")).hexdigest()
+
+
+def _check_pair_request(client_ip: str, now: float) -> bool:
+    if not db_write(
+        "DELETE FROM pair_code_rate_limits WHERE rate_key<>'global' "
+        "AND window_start<? AND failure_window<? AND locked_until<?",
+        (now - _PAIR_IP_WINDOW, now - _PAIR_IP_WINDOW, now),
+    ):
+        raise RuntimeError("pair_code_rate_limit_unavailable")
+    global_row = _increment_pair_attempt("global", now, _PAIR_GLOBAL_WINDOW)
+    ip_row = _increment_pair_attempt(_pair_ip_rate_key(client_ip), now, _PAIR_IP_WINDOW)
+    return (
+        global_row["attempts"] <= _PAIR_GLOBAL_LIMIT
+        and ip_row["attempts"] <= _PAIR_IP_LIMIT
+        and float(ip_row["locked_until"]) <= now
+    )
+
+
+def _record_pair_failure(client_ip: str, now: float) -> None:
+    rate_key = _pair_ip_rate_key(client_ip)
+    rows = db_write_returning(
+        "INSERT INTO pair_code_rate_limits(rate_key,window_start,attempts,failure_window,failures,locked_until) "
+        "VALUES(?,?,0,?,1,0) ON CONFLICT(rate_key) DO UPDATE SET "
+        "failures=CASE WHEN ?-pair_code_rate_limits.failure_window>=? THEN 1 "
+        "ELSE pair_code_rate_limits.failures+1 END,"
+        "failure_window=CASE WHEN ?-pair_code_rate_limits.failure_window>=? THEN ? "
+        "ELSE pair_code_rate_limits.failure_window END "
+        "RETURNING failures",
+        (rate_key, now, now, now, _PAIR_IP_WINDOW, now, _PAIR_IP_WINDOW, now),
+    )
+    if not rows:
+        raise RuntimeError("pair_code_rate_limit_unavailable")
+    if rows[0]["failures"] >= _PAIR_FAILURE_LIMIT:
+        if not db_write(
+            "UPDATE pair_code_rate_limits SET locked_until=? WHERE rate_key=?",
+            (now + _PAIR_LOCKOUT_SECONDS, rate_key),
+        ):
+            raise RuntimeError("pair_code_rate_limit_unavailable")
+
+
+def _clear_pair_failures(client_ip: str) -> None:
+    if not db_write(
+        "UPDATE pair_code_rate_limits SET failures=0,locked_until=0 WHERE rate_key=?",
+        (_pair_ip_rate_key(client_ip),),
+    ):
+        raise RuntimeError("pair_code_rate_limit_unavailable")
+
+
+def _pair_code_error():
+    return jsonify({"ok": False, "error": "pair_code_invalid"}), 400
 
 
 @devices_bp.route("/api/devices/pair", methods=["POST", "OPTIONS"])
@@ -75,24 +149,23 @@ def redeem_device_pair_code():
         return "", 204
     client_ip = request.remote_addr or "unknown"
     now = time.monotonic()
-    with _pair_attempt_lock:
-        attempts = _pair_attempts[client_ip]
-        while attempts and now - attempts[0] >= 300:
-            attempts.popleft()
-        if len(attempts) >= 10:
-            return jsonify({"ok": False, "error": "pair_code_rate_limited"}), 429
-        attempts.append(now)
+    if not _check_pair_request(client_ip, now):
+        return jsonify({"ok": False, "error": "pair_code_rate_limited"}), 429
 
     body = request.get_json(silent=True) or {}
     code = body.get("code")
     if not isinstance(code, str):
-        return jsonify({"ok": False, "error": "invalid_pair_code"}), 400
+        _record_pair_failure(client_ip, now)
+        return _pair_code_error()
     code = code.strip().upper()
     if not _PAIR_CODE_RE.fullmatch(code):
-        return jsonify({"ok": False, "error": "invalid_pair_code"}), 400
+        _record_pair_failure(client_ip, now)
+        return _pair_code_error()
     result = redeem_pair_code(code)
     if not result:
-        return jsonify({"ok": False, "error": "pair_code_expired_or_invalid"}), 404
+        _record_pair_failure(client_ip, now)
+        return _pair_code_error()
+    _clear_pair_failures(client_ip)
     device_id, token, name = result
     return jsonify({
         "ok": True,

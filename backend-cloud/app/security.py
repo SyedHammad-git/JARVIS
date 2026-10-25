@@ -26,6 +26,9 @@ def _verify_clerk_token(token: str) -> str | None:
         raise RuntimeError("Clerk bearer authentication requires CLERK_ISSUER and CLERK_JWKS_URL")
     if not issuer.startswith("https://") or not jwks_url.startswith("https://"):
         raise RuntimeError("Clerk issuer and JWKS URL must use HTTPS")
+    authorized_parties = configured_authorized_parties()
+    if not authorized_parties:
+        return None
 
     import jwt
     from jwt import PyJWKClient
@@ -33,7 +36,7 @@ def _verify_clerk_token(token: str) -> str | None:
     with _clerk_jwks_lock:
         client = _clerk_jwks_clients.get(jwks_url)
         if client is None:
-            client = PyJWKClient(jwks_url, cache_keys=True)
+            client = PyJWKClient(jwks_url, cache_keys=True, lifespan=3600, timeout=5)
             _clerk_jwks_clients[jwks_url] = client
     signing_key = client.get_signing_key_from_jwt(token)
     claims = jwt.decode(
@@ -41,13 +44,19 @@ def _verify_clerk_token(token: str) -> str | None:
         signing_key.key,
         algorithms=["RS256"],
         issuer=issuer,
+        leeway=30,
         options={"require": ["exp", "iat", "sub"]},
     )
     subject = claims.get("sub")
     authorized_party = claims.get("azp")
-    if not isinstance(authorized_party, str) or authorized_party not in configured_cors_origins():
+    if not isinstance(authorized_party, str) or authorized_party not in authorized_parties:
         return None
-    return subject if isinstance(subject, str) and subject else None
+    return f"clerk:{subject}" if isinstance(subject, str) and subject else None
+
+
+def configured_authorized_parties() -> list[str]:
+    raw = os.environ.get("CLERK_AUTHORIZED_PARTIES", "")
+    return [party.strip().rstrip("/") for party in raw.split(",") if party.strip()]
 
 
 def get_client_ip() -> str:
@@ -90,8 +99,14 @@ def validate_production_config() -> None:
         raise RuntimeError("Production startup refused: CORS_ORIGINS must contain explicit origins")
     if not os.environ.get("DATABASE_URL", "").strip():
         raise RuntimeError("Production startup refused: DATABASE_URL is required")
-    if not os.environ.get("CLERK_ISSUER", "").strip() or not os.environ.get("CLERK_JWKS_URL", "").strip():
+    if (not os.environ.get("CLERK_ISSUER", "").strip()
+            or not os.environ.get("CLERK_JWKS_URL", "").strip()):
         raise RuntimeError("Production startup refused: CLERK_ISSUER and CLERK_JWKS_URL are required")
+    authorized_parties = configured_authorized_parties()
+    if not authorized_parties:
+        raise RuntimeError("Production startup refused: CLERK_AUTHORIZED_PARTIES is required")
+    if any(not party.startswith("https://") or "*" in party for party in authorized_parties):
+        raise RuntimeError("Production startup refused: authorized parties must be explicit HTTPS origins")
     if not os.environ.get("API_KEY_ENCRYPTION_KEY", "").strip():
         raise RuntimeError("Production startup refused: API_KEY_ENCRYPTION_KEY is required")
 
@@ -137,12 +152,7 @@ def install_api_security(app) -> None:
 
         if username and hasattr(g, "current_user"):
             from app.config import set_user_api_keys
-            from app.key_store import KeyStorageUnavailable, load_user_keys
-
-            try:
-                g.api_key_context_token = set_user_api_keys(load_user_keys(username))
-            except KeyStorageUnavailable:
-                return jsonify({"ok": False, "error": "api_key_storage_unavailable"}), 503
+            g.api_key_context_token = set_user_api_keys({})
 
         if not username and request.path == "/api/device/status" and request.method == "GET":
             from app.devices.pairing import get_device
@@ -152,7 +162,8 @@ def install_api_security(app) -> None:
             provided = request.headers.get("X-JARVIS-Device-Token", "")
             device = get_device(device_id) if device_id else None
             stored_hash = (device or {}).get("token_hash") or ("0" * 64)
-            if device and hmac.compare_digest(str(stored_hash), hash_token(provided)):
+            if (device and not int(device.get("revoked") or 0)
+                    and hmac.compare_digest(str(stored_hash), hash_token(provided))):
                 g.device_status = device
                 return None
 

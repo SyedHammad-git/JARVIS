@@ -6,15 +6,28 @@ from unittest.mock import patch
 from socketio.exceptions import TimeoutError as SocketIOTimeout
 
 from app.devices.gateway import call_device, is_online, _bind, _unbind_sid
-from app.devices.pairing import hash_token, issue_device, validate_device_token, revoke_device
+from app.devices.pairing import (
+    hash_token,
+    issue_device,
+    validate_device_token,
+    revoke_device,
+    set_device_scopes,
+)
 from app.extensions import socketio
 
 
 class CallDeviceTests(unittest.TestCase):
-    def setUp(self):
-        active_device = patch("app.devices.gateway.get_device_status_cached", return_value={"revoked": 0})
-        active_device.start()
-        self.addCleanup(active_device.stop)
+    def _owned_device(self, name):
+        owner = "gateway-test-owner"
+        device_id, token = issue_device(name, owner)
+        scopes = {
+            "allow_open_app": True,
+            "allow_camera": False,
+            "allow_notify": False,
+            "allow_lock": False,
+        }
+        self.assertTrue(set_device_scopes(device_id, owner, scopes))
+        return device_id, token, owner
 
     def test_offline_when_unmapped(self):
         self.assertFalse(is_online("dev_nobody"))
@@ -22,41 +35,51 @@ class CallDeviceTests(unittest.TestCase):
         self.assertEqual(out, {"ok": False, "error": "device_offline"})
 
     def test_timeout(self):
-        _bind("dev_to", "sid_to")
+        device_id, _token, owner = self._owned_device("timeout-pc")
+        _bind(device_id, "sid_to")
         try:
             with patch("app.devices.gateway.socketio.call", side_effect=SocketIOTimeout("t")):
-                out = call_device("dev_to", "open_app", {"target": "notepad"}, timeout=1)
+                out = call_device(
+                    device_id, "open_app", {"target": "notepad"}, timeout=1,
+                    owner_username=owner,
+                )
             self.assertEqual(out, {"ok": False, "error": "device_timeout"})
         finally:
             _unbind_sid("sid_to")
 
     def test_ack_must_be_dict_with_ok(self):
-        _bind("dev_ack", "sid_ack")
+        device_id, _token, owner = self._owned_device("ack-pc")
+        _bind(device_id, "sid_ack")
         try:
             with patch("app.devices.gateway.socketio.call", return_value="nope"):
                 self.assertEqual(
-                    call_device("dev_ack", "open_app", {}),
+                    call_device(device_id, "open_app", {}, owner_username=owner),
                     {"ok": False, "error": "device_timeout"},
                 )
             with patch("app.devices.gateway.socketio.call", return_value={"message": "missing ok"}):
                 self.assertEqual(
-                    call_device("dev_ack", "open_app", {}),
+                    call_device(device_id, "open_app", {}, owner_username=owner),
                     {"ok": False, "error": "device_timeout"},
                 )
             with patch("app.devices.gateway.socketio.call",
                        return_value={"ok": True, "message": "fake executed"}):
-                out = call_device("dev_ack", "open_app", {"target": "notepad"})
+                out = call_device(
+                    device_id, "open_app", {"target": "notepad"}, owner_username=owner,
+                )
             self.assertTrue(out["ok"])
             self.assertEqual(out["message"], "fake executed")
         finally:
             _unbind_sid("sid_ack")
 
     def test_payload_shape(self):
-        _bind("dev_pay", "sid_pay")
+        device_id, _token, owner = self._owned_device("payload-pc")
+        _bind(device_id, "sid_pay")
         try:
             with patch("app.devices.gateway.socketio.call",
                        return_value={"ok": True, "message": "x"}) as mock_call:
-                call_device("dev_pay", "open_app", {"target": "notepad"})
+                call_device(
+                    device_id, "open_app", {"target": "notepad"}, owner_username=owner,
+                )
             args, kwargs = mock_call.call_args
             self.assertEqual(args[0], "command")
             payload = args[1]
@@ -69,12 +92,15 @@ class CallDeviceTests(unittest.TestCase):
             _unbind_sid("sid_pay")
 
     def test_revoked_device_is_refused_before_emit(self):
-        _bind("dev_revoked", "sid_revoked")
+        device_id, _token, owner = self._owned_device("revoked-pc")
+        _bind(device_id, "sid_revoked")
         try:
-            with patch("app.devices.gateway.get_device_status_cached", return_value={"revoked": 1}), \
-                 patch("app.devices.gateway.socketio.call") as mock_call:
+            self.assertTrue(revoke_device(device_id))
+            with patch("app.devices.gateway.socketio.call") as mock_call:
                 self.assertEqual(
-                    call_device("dev_revoked", "open_app", {"target": "notepad"}),
+                    call_device(
+                        device_id, "open_app", {"target": "notepad"}, owner_username=owner,
+                    ),
                     {"ok": False, "error": "device_revoked"},
                 )
             mock_call.assert_not_called()
@@ -84,10 +110,29 @@ class CallDeviceTests(unittest.TestCase):
 
 class TokenValidateTests(unittest.TestCase):
     def test_wrong_token_rejected(self):
-        device_id, token = issue_device("gw-pc")
+        from app import create_app
+
+        device_id, token = issue_device("gw-pc", "wrong-token-owner")
         self.assertIsNotNone(validate_device_token(device_id, token))
         self.assertIsNone(validate_device_token(device_id, "wrong-" + token))
         self.assertIsNone(validate_device_token("dev_missing", token))
+        app = create_app(testing=True)
+        bad_client = socketio.test_client(
+            app,
+            namespace="/device",
+            auth={"device_id": device_id, "token": "wrong-" + token},
+        )
+        self.assertFalse(bad_client.is_connected("/device"))
+        good_client = socketio.test_client(
+            app,
+            namespace="/device",
+            auth={"device_id": device_id, "token": token},
+        )
+        try:
+            self.assertTrue(good_client.is_connected("/device"))
+        finally:
+            if good_client.is_connected("/device"):
+                good_client.disconnect(namespace="/device")
         revoke_device(device_id)
         self.assertIsNone(validate_device_token(device_id, token))
         self.assertEqual(len(hash_token(token)), 64)
@@ -99,7 +144,8 @@ class LiveRevocationTests(unittest.TestCase):
 
         app = create_app(testing=True)
 
-        device_id, token = issue_device("live-revoke-test")
+        owner = "live-revoke-owner"
+        device_id, token = issue_device("live-revoke-test", owner)
         client = socketio.test_client(
             app,
             namespace="/device",
@@ -111,12 +157,11 @@ class LiveRevocationTests(unittest.TestCase):
             self.assertTrue(revoke_device(device_id))
             self.assertFalse(client.is_connected("/device"))
             self.assertLess(time.monotonic() - started, 2.0)
-            response = app.test_client().get(
-                "/api/device/status", query_string={"device_id": device_id}
-            )
-            self.assertTrue(response.get_json()["revoked"])
             self.assertEqual(
-                call_device(device_id, "open_app", {"target": "notepad"}),
+                call_device(
+                    device_id, "open_app", {"target": "notepad"},
+                    owner_username=owner,
+                ),
                 {"ok": False, "error": "device_revoked"},
             )
         finally:

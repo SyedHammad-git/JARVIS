@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import pyotp
 import pytest
+from cryptography.fernet import Fernet
 from flask import Flask, jsonify, request
 from werkzeug.routing import UUIDConverter
 
@@ -144,6 +145,7 @@ def test_proxyfix_trusts_forwarded_ip_only_when_hops_configured(monkeypatch):
 
 def test_security_headers_and_explicit_cors(monkeypatch):
     monkeypatch.setenv("CORS_ORIGINS", "https://jarvis.example.test")
+    monkeypatch.setenv("CLERK_AUTHORIZED_PARTIES", "https://jarvis.example.test")
     app = create_app(testing=True)
     response = app.test_client().get(
         "/", headers={"Origin": "https://jarvis.example.test"}
@@ -180,3 +182,21 @@ def test_production_rejects_missing_or_weak_configuration(monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "0")
     with pytest.raises(RuntimeError, match="AUTH_ENABLED"):
         validate_production_config()
+
+    monkeypatch.setenv("AUTH_ENABLED", "1")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://pooler.invalid/db")
+    monkeypatch.setenv("CLERK_ISSUER", "https://clerk.example.test")
+    monkeypatch.setenv("CLERK_JWKS_URL", "https://clerk.example.test/.well-known/jwks.json")
+    monkeypatch.delenv("CLERK_AUTHORIZED_PARTIES", raising=False)
+    with pytest.raises(RuntimeError, match="CLERK_AUTHORIZED_PARTIES"):
+        validate_production_config()
+
+    monkeypatch.setenv("CLERK_AUTHORIZED_PARTIES", "http://jarvis.example.test")
+    with pytest.raises(RuntimeError, match="HTTPS origins"):
+        validate_production_config()
+
+    monkeypatch.setenv("CLERK_AUTHORIZED_PARTIES", "https://jarvis.example.test")
+    monkeypatch.setenv("CLERK_ISSUER", "https://clerk.example.test")
+    monkeypatch.setenv("CLERK_JWKS_URL", "https://clerk.example.test/.well-known/jwks.json")
+    monkeypatch.setenv("API_KEY_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    validate_production_config()
