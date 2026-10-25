@@ -1,0 +1,142 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark light;
+  --page: #07111f;
+  --panel: #0d1b2c;
+  --panel-raised: #12243a;
+  --ink: #e8f0fa;
+  --muted: #a8b8ca;
+  --line: #284058;
+  --accent: #6ce5f3;
+  --accent-ink: #03141a;
+  --success: #a7f3d0;
+  --danger: #fda4af;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --page: #f5f8fc;
+    --panel: #ffffff;
+    --panel-raised: #edf4fa;
+    --ink: #102033;
+    --muted: #4f6175;
+    --line: #c9d6e2;
+    --accent: #006b7b;
+    --accent-ink: #ffffff;
+    --success: #086b45;
+    --danger: #a51f39;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--page);
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(ellipse at 80% -15%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 40%),
+    var(--page);
+  color: var(--ink);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+a {
+  color: var(--accent);
+  text-underline-offset: 0.2em;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button,
+a,
+input,
+textarea {
+  outline-offset: 3px;
+}
+
+:focus-visible {
+  outline: 3px solid var(--accent);
+}
+
+.site-width {
+  width: min(1100px, calc(100% - 2rem));
+  margin-inline: auto;
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--panel);
+}
+
+.field {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  background: var(--page);
+  color: var(--ink);
+  padding: 0.75rem 0.85rem;
+}
+
+.button-primary {
+  display: inline-flex;
+  min-height: 2.8rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--accent);
+  border-radius: 0.65rem;
+  background: var(--accent);
+  color: var(--accent-ink);
+  padding: 0.65rem 1rem;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.button-secondary {
+  display: inline-flex;
+  min-height: 2.8rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  background: var(--panel-raised);
+  color: var(--ink);
+  padding: 0.65rem 1rem;
+  font-weight: 650;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.status-online {
+  color: var(--success);
+}
+
+.status-offline {
+  color: var(--danger);
+}
