@@ -17,7 +17,6 @@ if os.environ.get("JARVIS_SKIP_DOTENV") != "1":
     load_dotenv(str(ROOT / ".env"), override=False)
 
 os.environ.setdefault("DB_BACKEND", "sqlite")
-os.environ.setdefault("DEVICE_GATEWAY", "on")
 os.environ.setdefault("JARVIS_HOST", "127.0.0.1")
 os.environ.setdefault("PYTHONUTF8", "1")
 
@@ -62,11 +61,9 @@ def main() -> int:
     print("GROQ_KEY", bool(os.environ.get("GROQ_KEY")))
     print("GEMINI_KEY", bool(os.environ.get("GEMINI_KEY")))
     print("OPENROUTER_KEY", bool(os.environ.get("OPENROUTER_KEY")))
-    print("JARVIS_PIN", bool(os.environ.get("JARVIS_PIN")))
-
     from app import create_app
     from app.extensions import socketio
-    from app.devices.pairing import issue_device, revoke_device, validate_device_token
+    from app.devices.pairing import issue_device, revoke_device, set_device_scopes, validate_device_token
     from app.devices.gateway import call_device, is_online
 
     app = create_app()
@@ -86,7 +83,15 @@ def main() -> int:
 
     results = {}
 
-    device_id, token = issue_device("verify-pc")
+    owner = "verify-gateway-owner"
+    device_id, token = issue_device("verify-pc", owner)
+    set_device_scopes(device_id, owner, {
+        "allow_open_app": True,
+        "allow_camera": False,
+        "allow_notify": False,
+        "allow_lock": False,
+        "allow_system_stats": False,
+    })
     print("paired_device_id_prefix", device_id[:8])
     print("token_present", bool(token))
 
@@ -103,7 +108,10 @@ def main() -> int:
     print("a_good_token_connected", results["good_token_connected"], "err", err_ok)
 
     # c) open_app ack
-    ack = call_device(device_id, "open_app", {"target": "notepad"}, timeout=10)
+    ack = call_device(
+        device_id, "open_app", {"target": "notepad"}, timeout=10,
+        owner_username=owner,
+    )
     results["open_app_ack"] = bool(ack.get("ok")) and ack.get("message") == "fake executed"
     results["open_app_payload"] = (got.get("cmd") or {}).get("action") == "open_app"
     print("c_ack", ack.get("ok"), "payload_open_app", results["open_app_payload"])
@@ -130,11 +138,21 @@ def main() -> int:
         sio_rev.disconnect()
 
     # d) never-ack -> device_timeout ~20s
-    device_id2, token2 = issue_device("timeout-pc")
+    device_id2, token2 = issue_device("timeout-pc", owner)
+    set_device_scopes(device_id2, owner, {
+        "allow_open_app": True,
+        "allow_camera": False,
+        "allow_notify": False,
+        "allow_lock": False,
+        "allow_system_stats": False,
+    })
     sio_na, _, err_na = _connect(device_id2, token2, never_ack=True)
     print("d_never_ack_connected", sio_na is not None, "err", err_na)
     t0 = time.time()
-    to_ack = call_device(device_id2, "open_app", {"target": "notepad"}, timeout=20)
+    to_ack = call_device(
+        device_id2, "open_app", {"target": "notepad"}, timeout=20,
+        owner_username=owner,
+    )
     elapsed = time.time() - t0
     results["device_timeout"] = to_ack.get("error") == "device_timeout" and 15 <= elapsed <= 28
     print("d_timeout", to_ack, "elapsed_s", round(elapsed, 1))

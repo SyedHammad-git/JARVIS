@@ -6,8 +6,7 @@ from unittest.mock import patch
 
 import app.tools as tools  # noqa: F401
 import app.ai.agent as agent
-from app.tools.device_tools import tool_take_snapshot
-import app.config as config
+from app.tools.registry import REGISTRY, llm_schemas
 import app.db as database
 from app.vision import snapshots
 from app.vision.snapshots import (
@@ -79,7 +78,6 @@ def test_snapshot_sends_image_only_to_vision_and_keeps_it_out_of_history(tmp_pat
             "Take a snapshot and describe it.",
             session_id="snapshot-redaction-test",
             ctx={
-                "execution_mode": "remote",
                 "device_online": True,
                 "device_id": "dev_snapshot_test",
                 "snapshot_user": user_key,
@@ -112,10 +110,13 @@ def test_snapshot_rate_limiter_is_per_user_and_six_per_minute():
     assert limiter.allow("user-a")
 
 
-def test_opencv_snapshot_helper_refuses_remote_mode(monkeypatch):
-    monkeypatch.setattr(config, "EXECUTION_MODE", "remote")
-    monkeypatch.setattr(config, "CV2_OK", True)
-    assert tool_take_snapshot({}) == {"ok": False, "error": "camera_unavailable"}
+def test_snapshot_is_schema_only_and_dispatched_to_online_client():
+    tool = REGISTRY["take_snapshot"]
+    assert tool.where == "device"
+    assert tool.handler is None
+    assert tool.risk == "medium"
+    schemas = llm_schemas(device_online=True)
+    assert "take_snapshot" in {schema["function"]["name"] for schema in schemas}
 
 
 def test_snapshot_cleanup_removes_expired_files_only(tmp_path):

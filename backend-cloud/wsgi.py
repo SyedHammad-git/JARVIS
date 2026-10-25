@@ -101,12 +101,10 @@ def unhandled_exception(e):
     return jsonify({"error": "An unexpected error occurred", "code": 500}), 500
 
 # ── 9. Startup banner ─────────────────────────────────────────────
-from app.tools import AGENT_TOOLS
-from app.notifications import PLYER_OK
+from app.tools.registry import REGISTRY
 from app.config import (
     GROQ_KEY, GEMINI_KEY, OPENROUTER_KEY, WEATHER_KEY,
-    CV2_OK, DDGS_OK, CLIP_OK,
-    heartbeat_cfg, EXECUTION_MODE, DEVICE_ID, DEVICE_GATEWAY,
+    DDGS_OK, heartbeat_cfg,
 )
 from app.db import DB_PATH
 
@@ -121,13 +119,10 @@ print(f"║   Groq        : {'✅ active' if GROQ_KEY else '❌ missing GROQ_KEY
 print(f"║   Gemini      : {'✅ active' if GEMINI_KEY else '❌ missing GEMINI_KEY'}")
 print(f"║   OpenRouter  : {'✅ active' if OPENROUTER_KEY else '❌ missing OPENROUTER_KEY'}")
 print(f"║   Weather     : {'✅ OWM active' if WEATHER_KEY else '⚠  wttr.in fallback'}")
-print(f"║   plyer       : {'✅ OS notifications' if PLYER_OK else '⚠  pip install plyer'}")
-print(f"║   OpenCV      : {'✅ camera ready' if CV2_OK else '⚠  pip install opencv-python'}")
 print(f"║   DDG Search  : {'✅ web search ready' if DDGS_OK else '⚠  pip install duckduckgo-search'}")
-print(f"║   Clipboard   : {'✅ active' if CLIP_OK else '⚠  pip install pyperclip'}")
-print(f"║   Tools       : {len(AGENT_TOOLS)} agent tools")
-print(f"║   Exec mode   : {EXECUTION_MODE} ({DEVICE_ID})")
-print(f"║   Gateway     : {'✅ Socket.IO /device' if DEVICE_GATEWAY else 'off (Waitress)'}")
+print(f"║   Tools       : {len(REGISTRY)} agent tools")
+print(f"║   Auth mode   : {os.environ.get('AUTH_MODE', 'local').lower()}")
+print("║   Gateway     : Socket.IO /device")
 print(f"║   Heartbeat   : {'✅ enabled' if heartbeat_cfg['enabled'] else '⏸  disabled'}")
 print("╠══════════════════════════════════════════════════════════╣")
 print("║   http://localhost:5000           Desktop UI             ║")
@@ -138,9 +133,8 @@ print("╚═══════════════════════�
 print()
 
 # ── 10. Run ───────────────────────────────────────────────────────
-# Flask-SocketIO WebSockets work with the Werkzeug server (local) and with
-# Gunicorn gthread (Linux). Waitress is NOT a WebSocket server — keep it
-# only when DEVICE_GATEWAY=off.
+# Flask-SocketIO WebSockets work with the Werkzeug development server and
+# with Gunicorn gthread (Linux).
 #
 # Production (Linux, one process — multiple workers need sticky sessions
 # plus a message queue such as Redis):
@@ -152,34 +146,15 @@ if __name__ == "__main__":
     port  = int(os.environ.get("JARVIS_PORT", 5000))
     debug = os.environ.get("JARVIS_DEBUG", "false").lower() == "true"
 
-    if DEVICE_GATEWAY:
-        if debug:
-            log.warning("DEBUG mode is ON — disable in production (JARVIS_DEBUG=false)")
-        log.info("Starting Flask-SocketIO on %s:%d (Werkzeug, threading)", host, port)
-        print(f"[JARVIS] ✅ Socket.IO gateway on http://{host}:{port}")
-        socketio.run(
-            app,
-            host=host,
-            port=port,
-            debug=False,
-            use_reloader=False,
-            allow_unsafe_werkzeug=True,
-        )
-    else:
-        try:
-            from waitress import serve as _waitress_serve
-            log.info("Starting Waitress on %s:%d (DEVICE_GATEWAY=off, no WebSocket)", host, port)
-            print(f"[JARVIS] ✅ Waitress serving on http://{host}:{port} (sockets disabled)")
-            _waitress_serve(
-                app,
-                host=host,
-                port=port,
-                threads=8,
-                trusted_proxy="127.0.0.1",
-                trusted_proxy_headers="x-forwarded-for x-forwarded-proto",
-                clear_untrusted_proxy_headers=True,
-            )
-        except ImportError:
-            log.error("waitress not installed — run: pip install waitress")
-            log.warning("Falling back to Flask dev server (HTTP only)")
-            app.run(host=host, port=port, debug=False, threaded=True, use_reloader=False)
+    if debug:
+        log.warning("DEBUG mode is ON — disable in production (JARVIS_DEBUG=false)")
+    log.info("Starting Flask-SocketIO on %s:%d (Werkzeug, threading)", host, port)
+    print(f"[JARVIS] Socket.IO gateway on http://{host}:{port}")
+    socketio.run(
+        app,
+        host=host,
+        port=port,
+        debug=False,
+        use_reloader=False,
+        allow_unsafe_werkzeug=True,
+    )

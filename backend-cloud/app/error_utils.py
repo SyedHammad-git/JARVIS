@@ -18,11 +18,9 @@ path for everyday failures.
 import functools
 import logging
 import sqlite3
-import subprocess
 import threading
 import time
 
-import psutil
 import requests
 from flask import jsonify
 
@@ -88,10 +86,6 @@ def classify_exception(e: Exception):
         return "permission was denied", 403
     if isinstance(e, (FileNotFoundError, IsADirectoryError)):
         return "the file couldn't be found", 404
-    if isinstance(e, psutil.Error):
-        return "that process is no longer available", 404
-    if isinstance(e, subprocess.SubprocessError):
-        return "the system command didn't complete", 500
     if isinstance(e, sqlite3.Error):
         return "a storage error occurred", 503
     return None, 500
@@ -137,20 +131,6 @@ def api_errors(fn):
                 "error": "I couldn't locate that file, Sir.",
                 "code": 404,
             }), 404
-
-        except psutil.Error as e:
-            log.warning("%s: process error — %s", fn.__name__, e)
-            return jsonify({
-                "error": "That process is no longer available, Sir.",
-                "code": 404,
-            }), 404
-
-        except subprocess.SubprocessError as e:
-            log.error("%s: system command failed — %s", fn.__name__, e)
-            return jsonify({
-                "error": "That system command didn't complete successfully, Sir.",
-                "code": 500,
-            }), 500
 
         except sqlite3.Error as e:
             # Defense-in-depth: database.py already catches its own errors

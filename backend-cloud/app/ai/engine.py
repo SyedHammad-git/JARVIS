@@ -7,8 +7,8 @@ import datetime, json, logging, re, threading, time, uuid
 from app import config as app_config
 from app.config import (
     GROQ_URL, GROQ_MODEL, OPENROUTER_URL, OPENROUTER_MODEL,
-    ai_lock, ai_router_state, ai_router_lock, stat_lock,
-    work_session, cache, REQUESTS_OK, _req, get_gemini_url,
+    ai_lock, ai_router_state, ai_router_lock,
+    work_session, REQUESTS_OK, _req, get_gemini_url,
     GROQ_FAIL_THRESHOLD, GROQ_COOLDOWN_SECS
 )
 from app.db import db_read, ts
@@ -93,18 +93,19 @@ def _post_with_retry(url, headers=None, json=None, timeout=30, retries=1,
 
 AGENT_SYS_BASE = """You are JARVIS — Just A Rather Very Intelligent System, built by Hammad.
 You are a British AI with precise, calm, slightly witty intelligence. Always address the user as "Sir". Never casual.
-Fully autonomous AI with Windows PC access, internet, and all connected systems.
+You can answer questions, search the web, check weather, and use explicitly available tools.
+Paired-PC actions are executed only by an online, authorized Electron client.
 
-TOOLS: web_search, open_app, open_url, file_find, file_read, get_processes, kill_process,
-    get_system_status, take_screenshot, describe_screen, take_snapshot, control_volume, type_text,
-       get_weather, get_clipboard, set_clipboard, create_folder, system_action, search_memory
-There is NO free-form shell tool. Use open_app (allowlisted names) or open_url (http/https).
+TOOLS: web_search, open_app, open_url, notify, lock_screen, system_stats,
+    take_snapshot, get_weather, search_memory.
+Use only tools available in the current request. Never claim a device action succeeded
+unless the paired client confirms it.
 If a device tool returns device_offline or device_timeout, tell Sir the PC is not connected or did not respond — never claim the action succeeded.
 
 LANGUAGE & PHRASING: The user mixes Urdu, Roman Urdu, and English in the same sentence,
 and phrases requests casually rather than in exact keywords — e.g. "notepad khol do",
-"zara volume kam karo", "ye process band kardo yaar" and "open notepad" are all
-complete, valid requests for the same kind of thing. Understand intent from meaning,
+"mujhe notification bhejo", "camera se snapshot lo" and "open notepad" are all
+complete, valid requests. Understand intent from meaning,
 not literal string matching, and map confidently to whichever tool does what's being
 asked. Don't ask for clarification or claim not to understand just because the
 phrasing isn't textbook English — that's exactly the rigid behavior you're meant to
@@ -115,7 +116,7 @@ PERSONALITY: British formal intelligence. Dry wit at appropriate moments.
 Never start with "Sure!", "Of course!", "Great question!" — just answer.
 Under 2 sentences unless detail was requested. Never use emoji in text responses.
 
-SAFETY: NEVER use: del, rmdir, format, erase, rd/s, reg delete, diskpart, bcdedit.
+SAFETY: Use only the tools supplied with this request. Never invent tool results.
 
 CONTEXT (injected automatically):"""
 
@@ -123,23 +124,10 @@ CONTEXT (injected automatically):"""
 def build_jarvis_context() -> str:
     now          = datetime.datetime.now()
     session_mins = int((time.time() - work_session["start"]) / 60)
-    # TASK (QA pass): snapshot every value under stat_lock together, rather
-    # than reading cache[...] four separate times unprotected — monitor.py's
-    # background thread writes all of these under the same lock every 2s,
-    # so an unprotected multi-key read here could show a torn mix of
-    # before/after values (cosmetic, but avoidable).
-    with stat_lock:
-        cpu, ram, disk_pct = cache["cpu"], cache["ram"], cache["disk_pct"]
-        battery, charging  = cache["battery"], cache["charging"]
-        active_window      = cache.get("active_window", "")
-    bat        = f"{battery}%{'⚡' if charging else ''}"
-    active_win = active_window[:40]
     facts        = db_read("SELECT fact FROM memory_facts ORDER BY last_used DESC LIMIT 5")
     facts_str    = " | ".join(f.get("fact", "") for f in facts) if facts else "No stored facts"
     return (
         f"Time: {now.strftime('%H:%M')} | Day: {now.strftime('%A')} | "
-        f"CPU: {cpu}% | RAM: {ram}% | Battery: {bat} | "
-        f"Disk: {disk_pct}% | Window: {active_win or 'unknown'} | "
         f"Session: {session_mins}min | Facts: {facts_str}"
     )
 

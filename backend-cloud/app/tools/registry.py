@@ -23,7 +23,6 @@ class Tool:
     where: str  # "server" | "device"
     risk: str   # "low" | "medium" | "high"
     handler: Optional[Callable] = None
-    local_impl: Optional[Callable] = None
     extra: dict = field(default_factory=dict)
 
 
@@ -46,12 +45,9 @@ def llm_schemas(device_online: bool | None = None, device_id: str | None = None)
     """OpenAI-style tool schemas. Device tools are omitted when offline."""
     if device_online is None:
         try:
-            from app.config import DEVICE_ID, EXECUTION_MODE
-            if EXECUTION_MODE == "local":
-                device_online = True
-            else:
-                from app.devices.gateway import is_online
-                device_online = is_online(device_id or DEVICE_ID)
+            from app.config import DEVICE_ID
+            from app.devices.gateway import is_online
+            device_online = is_online(device_id or DEVICE_ID)
         except Exception:
             device_online = False
     schemas = []

@@ -17,6 +17,7 @@ from app.devices.pairing import (
     device_scope_for_action,
     get_device,
     get_device_status_cached,
+    list_devices,
     touch_last_seen,
     validate_device_token,
 )
@@ -37,6 +38,15 @@ def is_online(device_id: str | None) -> bool:
         return False
     with _map_lock:
         return device_id in _sid_by_device
+
+
+def first_online_device(owner_username: str) -> str | None:
+    for device in list_devices(owner_username):
+        device_id = device.get("device_id")
+        if (device_id and not int(device.get("revoked") or 0)
+                and is_online(device_id)):
+            return str(device_id)
+    return None
 
 
 def sid_for(device_id: str) -> str | None:
@@ -77,7 +87,7 @@ def call_device(
     scope = device_scope_for_action(action, args)
     if not scope or not device_scope_allows(device, action, args):
         return {"ok": False, "error": "device_scope_denied"}
-    high_risk = action in {"kill_process", "type_text", "system_action"}
+    high_risk = action in {"lock_screen"}
     if high_risk and (not confirmed or not confirmation_nonce):
         return {"ok": False, "error": "needs_confirmation"}
     sid = sid_for(device_id)

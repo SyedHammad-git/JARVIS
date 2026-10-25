@@ -1,4 +1,4 @@
-"""Agent loop: function calling, local device dispatch, confirmation, truncation."""
+"""Agent loop: cloud tools, paired-device dispatch, confirmation, truncation."""
 import json
 import unittest
 from unittest.mock import patch
@@ -59,24 +59,29 @@ class AgentLoopTests(unittest.TestCase):
         with _last_action_lock:
             _last_action_registry.clear()
         self._weather = REGISTRY["get_weather"].handler
-        self._open = REGISTRY["open_app"].local_impl
         REGISTRY["get_weather"].handler = lambda a: f"Weather in {a.get('city')}: 22C"
-        REGISTRY["open_app"].local_impl = lambda a: f"Opened {a.get('target')}"
 
     def tearDown(self):
         REGISTRY["get_weather"].handler = self._weather
-        REGISTRY["open_app"].local_impl = self._open
 
-    def test_loop_weather_then_open_app_local(self):
+    def test_loop_weather_then_open_app_uses_remote_device(self):
         fake = FakeLLM()
         with patch("app.ai.agent.chat", fake), \
              patch("app.ai.agent.save_message", return_value=True), \
              patch("app.ai.agent.load_recent_messages", return_value=[]), \
-             patch("app.ai.agent.prune_conversation", return_value=True):
+             patch("app.ai.agent.prune_conversation", return_value=True), \
+             patch("app.devices.gateway.call_device", return_value={
+                 "ok": True, "message": "Opened notepad",
+             }) as call_device:
             out = run_agent(
                 "weather in Lahore and open notepad",
                 session_id="test-loop",
-                ctx={"execution_mode": "local", "device_online": True, "confirmed": False},
+                ctx={
+                    "device_id": "dev_online",
+                    "owner_username": "clerk:test-owner",
+                    "device_online": True,
+                    "confirmed": False,
+                },
             )
         self.assertTrue(out["ok"])
         tools_used = [s["tool"] for s in out["steps"]]
@@ -87,13 +92,18 @@ class AgentLoopTests(unittest.TestCase):
         self.assertIn("get_weather", fake.tools_seen[0])
         self.assertIn("open_app", fake.tools_seen[0])
         self.assertLessEqual(fake.calls, 6)
+        call_device.assert_called_once()
+        self.assertEqual(call_device.call_args.args[:3], (
+            "dev_online", "open_app", {"target": "notepad"},
+        ))
+        self.assertEqual(call_device.call_args.kwargs["owner_username"], "clerk:test-owner")
 
     def test_device_tool_remote_offline(self):
         with patch("app.devices.gateway.call_device", return_value={"ok": False, "error": "device_offline"}):
             raw = execute_tool(
                 "open_app",
                 {"target": "notepad"},
-                {"execution_mode": "remote", "device_id": "dev_test", "confirmed": True},
+                {"device_id": "dev_test", "confirmed": True},
             )
         data = json.loads(raw)
         self.assertFalse(data["ok"])
@@ -105,7 +115,7 @@ class AgentLoopTests(unittest.TestCase):
             raw = execute_tool(
                 "open_app",
                 {"target": "notepad"},
-                {"execution_mode": "remote", "device_id": "dev_live", "confirmed": True},
+                {"device_id": "dev_live", "confirmed": True},
             )
         mock_call.assert_called_once_with(
             "dev_live",
@@ -143,7 +153,7 @@ class AgentLoopTests(unittest.TestCase):
             out = run_agent(
                 "open notepad",
                 session_id="test-offline",
-                ctx={"execution_mode": "remote", "device_id": "dev_off", "confirmed": True},
+                ctx={"device_id": "dev_off", "confirmed": True},
             )
         self.assertTrue(out["ok"])
         self.assertNotIn("open_app", fake.names)
@@ -152,9 +162,9 @@ class AgentLoopTests(unittest.TestCase):
 
     def test_high_risk_needs_confirmation(self):
         raw = execute_tool(
-            "kill_process",
-            {"name_or_pid": "notepad"},
-            {"execution_mode": "local", "confirmed": False},
+            "lock_screen",
+            {},
+            {"confirmed": False},
         )
         data = json.loads(raw)
         self.assertTrue(data.get("needs_confirmation"))

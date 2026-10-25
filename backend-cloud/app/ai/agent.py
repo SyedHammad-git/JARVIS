@@ -6,7 +6,7 @@ from app.config import (
     REQUESTS_OK,
     agent_lock,
     work_session, work_session_lock,
-    EXECUTION_MODE, DEVICE_ID,
+    DEVICE_ID,
 )
 from app.ai.engine import chat, build_jarvis_context, AGENT_SYS_BASE
 from app.tools.registry import llm_schemas, get_tool
@@ -84,44 +84,38 @@ def execute_tool(name: str, args: dict, ctx: dict | None = None) -> str:
             "reason": "untrusted_web_content" if ctx.get("ingested_web_content") else "high_risk",
         })
 
-    mode = ctx.get("execution_mode") or EXECUTION_MODE
     if name == "take_snapshot":
         from app.vision.snapshots import snapshot_ack_to_text, snapshot_rate_limiter
         user_key = ctx.get("snapshot_user") or ctx.get("device_id") or "unknown"
         if not snapshot_rate_limiter.allow(user_key):
             return "Camera snapshot rate limit reached. Please try again shortly."
-        if mode != "local":
-            from app.devices.gateway import call_device
-            ack = call_device(
-                ctx.get("device_id") or DEVICE_ID,
-                name,
-                args or {},
-                timeout=20,
-                owner_username=ctx.get("owner_username"),
-                confirmed=bool(ctx.get("confirmed")),
-                confirmation_nonce=ctx.get("confirmation_nonce"),
-            )
-        else:
-            ack = tool.local_impl(args or {})
+        from app.devices.gateway import call_device
+        ack = call_device(
+            ctx.get("device_id") or DEVICE_ID,
+            name,
+            args or {},
+            timeout=20,
+            owner_username=ctx.get("owner_username"),
+            confirmed=bool(ctx.get("confirmed")),
+            confirmation_nonce=ctx.get("confirmation_nonce"),
+        )
         return snapshot_ack_to_text(ack, (args or {}).get("question", ""))
 
     if tool.where == "device":
-        if mode != "local":
-            from app.devices.gateway import call_device
-            device_id = ctx.get("device_id") or DEVICE_ID
-            result = call_device(
-                device_id,
-                name,
-                args or {},
-                owner_username=ctx.get("owner_username"),
-                confirmed=bool(ctx.get("confirmed")),
-                confirmation_nonce=ctx.get("confirmation_nonce"),
-            )
-            with _last_action_lock:
-                if result.get("ok"):
-                    _last_action_registry[sig] = time.time()
-            return truncate_tool_result(result)
-        fn = tool.local_impl
+        from app.devices.gateway import call_device
+        device_id = ctx.get("device_id") or DEVICE_ID
+        result = call_device(
+            device_id,
+            name,
+            args or {},
+            owner_username=ctx.get("owner_username"),
+            confirmed=bool(ctx.get("confirmed")),
+            confirmation_nonce=ctx.get("confirmation_nonce"),
+        )
+        with _last_action_lock:
+            if result.get("ok"):
+                _last_action_registry[sig] = time.time()
+        return truncate_tool_result(result)
     else:
         fn = tool.handler
     if not fn:
@@ -160,21 +154,17 @@ def _run_agent_inner(user_input: str, session_id: str, max_steps: int, ctx: dict
         work_session["last_active"] = time.time()
 
     ctx = dict(ctx)
-    ctx.setdefault("execution_mode", EXECUTION_MODE)
     ctx.setdefault("device_id", DEVICE_ID)
     ctx.setdefault("confirmed", False)
     device_online = ctx.get("device_online")
     device_id = ctx.get("device_id") or DEVICE_ID
     if device_online is None:
-        if ctx["execution_mode"] == "local":
-            device_online = True
-        else:
-            from app.devices.gateway import is_online
-            device_online = is_online(device_id)
+        from app.devices.gateway import is_online
+        device_online = is_online(device_id)
 
     schemas = llm_schemas(device_online=bool(device_online), device_id=device_id)
     sys_prompt = AGENT_SYS_BASE + "\n" + build_jarvis_context()
-    if ctx["execution_mode"] == "remote" and not device_online:
+    if not device_online:
         sys_prompt += (
             "\nDEVICE STATUS: the paired PC is offline (device_offline). "
             "If the user asks to control the computer, explain politely that it is not connected. "

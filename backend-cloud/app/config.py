@@ -14,11 +14,7 @@ from app.db import cfg_get, cfg_set
 
 log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 
-# ── Execution mode (v18): local = this PC runs device tools; remote = Electron client
-_EXEC_RAW = os.environ.get("EXECUTION_MODE", "local").lower().strip()
-EXECUTION_MODE = _EXEC_RAW if _EXEC_RAW in ("local", "remote") else "local"
 DEVICE_ID = os.environ.get("DEVICE_ID", "pc-primary").strip() or "pc-primary"
-DEVICE_GATEWAY = os.environ.get("DEVICE_GATEWAY", "on").lower().strip() != "off"
 
 # ── Optional dependencies ──────────────────────────────────────────
 try:
@@ -28,25 +24,9 @@ except ImportError:
     print("[WARN] pip install requests")
 
 try:
-    import cv2; CV2_OK = True
-except ImportError:
-    cv2 = None; CV2_OK = False
-
-try:
     from duckduckgo_search import DDGS; DDGS_OK = True
 except ImportError:
     DDGS = None; DDGS_OK = False
-
-try:
-    import pyperclip; CLIP_OK = True
-except ImportError:
-    pyperclip = None; CLIP_OK = False
-
-TUYA_OK = False
-try:
-    import tuyapy; TUYA_OK = True
-except ImportError:
-    pass
 
 # ── Server start epoch ────────────────────────────────────────────
 _server_start = time.time()
@@ -160,17 +140,6 @@ def _check_api_keys():
 
 _check_api_keys()
 
-# ── PIN init ──────────────────────────────────────────────────────
-_env_pin = os.environ.get("JARVIS_PIN", "").strip()
-if _env_pin and _env_pin.isdigit():
-    if not cfg_get("pin", ""):
-        cfg_set("pin", _env_pin)
-        print("[CONFIG] [INFO] PIN loaded from environment")
-else:
-    if not cfg_get("pin", ""):
-        cfg_set("pin", "1234")
-        print("[CONFIG] [WARN] Default PIN 1234 set; change via /api/pin/change")
-
 # ── ✅ FIX H3: SECRET_KEY — never use a known fallback in production ─
 # Generate a random key and store it in DB so it survives restarts
 _stored_secret = cfg_get("flask_secret", "")
@@ -203,15 +172,9 @@ ai_router_state = {
 GROQ_FAIL_THRESHOLD = 3
 GROQ_COOLDOWN_SECS  = 30
 
-# ── Stats cache (written by monitor thread every 2 s) ─────────────
+# ── Server-side status cache ──────────────────────────────────────
 cache = {
-    "cpu": 0, "ram": 0, "ram_used": 0, "ram_total": 0,
-    "battery": 0, "charging": False,
-    "net_down": 0.0, "net_up": 0.0,
-    "disk_pct": 0, "disk_used": 0, "disk_total": 0,
-    "alerts": [], "processes": [],
-    "sec_stats": {"commands": 0, "blocked": 0, "ok": 0, "remote": 0},
-    "active_window": "", "active_app": ""
+    "alerts": [],
 }
 
 # ── Discord config ─────────────────────────────────────────────────
@@ -227,16 +190,6 @@ discord_cfg = {
     "enabled": cfg_get("discord_enabled", "false") == "true"
 }
 
-# ── Security ──────────────────────────────────────────────────────
-BLACKLIST = [
-    "del ", "del/", "/del", "rmdir", "format", "erase", "reg delete",
-    "diskpart", "rd /s", "del /f", "cipher /w", "bcdedit", "bootrec", "format c:",
-    "taskkill /f", ":(){:|:&}", "sudo rm", "rm -rf", "wget http", "curl http",
-]
-security_settings = {
-    "blacklist": True, "audit": True, "remote": True, "guardrail": True, "autolock": False
-}
-
 # ── Work session ──────────────────────────────────────────────────
 # ✅ FIX M2: All mutations MUST acquire work_session_lock
 work_session = {
@@ -250,8 +203,7 @@ work_session = {
 # ── Heartbeat engine state ────────────────────────────────────────
 heartbeat_cfg = {
     "enabled": True, "interval": 30,
-    "cpu_threshold": 85, "ram_threshold": 88,
-    "battery_low": 15, "coding_break_mins": 90,
+    "coding_break_mins": 90,
     "silence_until": 0, "last_run": 0
 }
 heartbeat_queue = []

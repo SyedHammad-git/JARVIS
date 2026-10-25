@@ -6,7 +6,7 @@ const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { APP_ALLOWLIST, createCommandHandler, createExecutor } = require('../src/executor');
+const { APP_ALLOWLIST, HIGH_RISK_ACTIONS, createCommandHandler, createExecutor } = require('../src/executor');
 const { createApproval } = require('../src/approval');
 const { createStore, validateConfig } = require('../src/store');
 const { createAudit } = require('../src/audit');
@@ -248,6 +248,7 @@ test('status endpoint 5xx keeps the revocation monitor retrying', async () => {
 });
 
 test('approval only prompts for high-risk actions and times out as deny', async () => {
+  assert.deepEqual(HIGH_RISK_ACTIONS, ['lock_screen']);
   let timerCallback;
   const approval = createApproval({
     dialog: { showMessageBox: () => new Promise(() => {}) },
@@ -256,14 +257,14 @@ test('approval only prompts for high-risk actions and times out as deny', async 
     clearTimer: () => {},
   });
   assert.equal(await approval.request('open_app'), false);
-  const pending = approval.request('shutdown', { summary: 'Power off' });
+  const pending = approval.request('lock_screen', { summary: 'Lock the PC' });
   timerCallback();
   assert.equal(await pending, false);
 });
 
 test('approval accepts only the explicit Approve response', async () => {
   const approval = createApproval({ dialog: { showMessageBox: async () => ({ response: 0 }) } });
-  assert.equal(await approval.request('restart'), true);
+  assert.equal(await approval.request('lock_screen'), true);
 });
 
 test('snapshot executor returns a valid acknowledged image payload', async () => {

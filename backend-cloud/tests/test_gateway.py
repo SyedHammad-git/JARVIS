@@ -25,6 +25,7 @@ class CallDeviceTests(unittest.TestCase):
             "allow_camera": False,
             "allow_notify": False,
             "allow_lock": False,
+            "allow_system_stats": False,
         }
         self.assertTrue(set_device_scopes(device_id, owner, scopes))
         return device_id, token, owner

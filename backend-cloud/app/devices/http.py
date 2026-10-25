@@ -1,4 +1,4 @@
-"""HTTP routes for pairing and device status. Pairing requires a PIN session."""
+"""HTTP routes for pairing and device status require authenticated ownership."""
 from __future__ import annotations
 
 import logging
@@ -8,7 +8,7 @@ import time
 
 from flask import Blueprint, g, jsonify, request
 
-from app.config import DEVICE_ID, EXECUTION_MODE
+from app.config import DEVICE_ID
 from app.db import db_write, db_write_returning
 from app.devices.gateway import is_online
 from app.devices.pairing import (
@@ -210,18 +210,13 @@ def device_status():
         full_device = get_device(device_id)
         if not device or not full_device or full_device.get("owner_username") != g.current_user["username"]:
             return jsonify({"ok": False, "error": "not_found"}), 404
-    online = is_online(device_id) if EXECUTION_MODE == "remote" else True
-    if EXECUTION_MODE == "local":
-        label = "local"
-    else:
-        label = "online" if online else "offline"
+    online = is_online(device_id)
     return jsonify({
         "ok": True,
         "device_id": device_id,
-        "execution_mode": EXECUTION_MODE,
         "online": bool(online),
         "revoked": bool(device and int(device.get("revoked") or 0)),
-        "label": label,
+        "label": "online" if online else "offline",
     })
 
 

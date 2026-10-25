@@ -19,6 +19,7 @@ DEFAULT_SCOPES = {
     "allow_camera": False,
     "allow_notify": False,
     "allow_lock": False,
+    "allow_system_stats": False,
 }
 ALLOWED_SCOPE_NAMES = frozenset(DEFAULT_SCOPES)
 DEVICE_STATUS_CACHE_TTL = 60
@@ -129,13 +130,10 @@ def device_scope_for_action(action: str, args: dict | None = None) -> str | None
         "open_app": "allow_open_app",
         "open_url": "allow_open_app",
         "take_snapshot": "allow_camera",
-        "take_screenshot": "allow_camera",
-        "describe_screen": "allow_camera",
         "notify": "allow_notify",
         "lock_screen": "allow_lock",
+        "system_stats": "allow_system_stats",
     }.get(action)
-    if action == "system_action" and (args or {}).get("action") == "lock":
-        scope_name = "allow_lock"
     return scope_name
 
 

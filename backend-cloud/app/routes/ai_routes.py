@@ -10,6 +10,7 @@ from app.config import (
     heartbeat_cfg, heartbeat_queue, heartbeat_lock
 )
 from app.db import db_read, db_write, db_write_returning
+from app.devices.gateway import first_online_device
 from app.ai.agent import run_agent, tool_confirmation_signature
 from app.ai.engine import call_gemini, route_ai_call, build_jarvis_context, AGENT_SYS_BASE
 from app.key_store import KeyStorageUnavailable, user_api_key_context
@@ -59,6 +60,8 @@ def _agent_chat_with_user_key_context():
         confirmed_signature = pending[0]["tool_signature"]
 
     owner = g.current_user["username"]
+    requested_device_id = str(data.get("device_id") or "").strip()
+    device_id = requested_device_id or first_online_device(owner)
     scoped_session_id = f"{owner}:{str(session_id)[:120]}"
     result = run_agent(
         user_input,
@@ -68,7 +71,8 @@ def _agent_chat_with_user_key_context():
             "confirmed_signature": confirmed_signature,
             "confirmation_nonce": confirmation_nonce,
             "owner_username": owner,
-            "snapshot_user": request.remote_addr or "unknown",
+            "device_id": device_id,
+            "snapshot_user": owner,
         },
     )
     confirmation_response = {}
@@ -238,7 +242,11 @@ def speak():
     msg  = (data.get("message") or data.get("text") or "").strip()
     if not msg:
         return jsonify({"error": "No message"}), 400
-    send_os_notification("J.A.R.V.I.S", msg)
+    send_os_notification(
+        "J.A.R.V.I.S",
+        msg,
+        owner_username=g.current_user["username"],
+    )
     return jsonify({"ok": True})
 
 

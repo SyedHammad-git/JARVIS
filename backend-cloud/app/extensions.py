@@ -1,4 +1,4 @@
-"""Shared Flask extensions. Socket.IO is optional at run-time (DEVICE_GATEWAY=off)."""
+"""Shared Flask extensions for the paired-device Socket.IO gateway."""
 from flask_socketio import SocketIO
 
 # cors_allowed_origins=[] : browser origins are not allowed. The Electron

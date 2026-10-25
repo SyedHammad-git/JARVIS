@@ -2,18 +2,13 @@
 J.A.R.V.I.S v17.M — Notifications
 FIXED: C5 safe_msg/safe_title always defined before any use
 """
-import datetime, json, logging, subprocess, threading
+import datetime, json, logging, threading
 from pathlib import Path
 
 from app.config import discord_cfg, REQUESTS_OK, _req
-from app.db import db_write, ts
+from app.db import db_read, db_write, ts
 
 log = logging.getLogger("jarvis.notifications")
-
-try:
-    from plyer import notification as _plyer_notif; PLYER_OK = True
-except ImportError:
-    _plyer_notif = None; PLYER_OK = False
 
 def send_discord_alert(message: str, image_path: str = None) -> bool:
     if not REQUESTS_OK: return False
@@ -46,45 +41,38 @@ def send_discord_alert(message: str, image_path: str = None) -> bool:
         log.error("Discord alert failed: %s", e)
         return False
 
-def send_os_notification(title: str, message: str, timeout: int = 8) -> bool:
-    msg_short  = message[:200]
-    # ✅ FIX C5: Define safe vars BEFORE any try block that might use them
-    safe_title = title.replace("'", "").replace('"', "")
-    safe_msg   = msg_short.replace("'", "").replace('"', "")
+def send_os_notification(
+    title: str,
+    message: str,
+    timeout: int = 8,
+    *,
+    owner_username: str | None = None,
+) -> bool:
+    from app.devices.gateway import call_device, is_online
 
-    # Method 1: plyer
-    if PLYER_OK:
-        try:
-            _plyer_notif.notify(title=title, message=msg_short,
-                                app_name="J.A.R.V.I.S", timeout=timeout)
-            return True
-        except Exception:
-            pass
-
-    # Method 2: PowerShell toast (Windows 10/11)
-    try:
-        ps = (
-            "[Windows.UI.Notifications.ToastNotificationManager,"
-            "Windows.UI.Notifications,ContentType=WindowsRuntime]|Out-Null;"
-            "$t=[Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent("
-            "[Windows.UI.Notifications.ToastTemplateType]::ToastText02);"
-            f"$t.SelectSingleNode('//text[@id=1]').InnerText='{safe_title}';"
-            f"$t.SelectSingleNode('//text[@id=2]').InnerText='{safe_msg}';"
-            "$n=[Windows.UI.Notifications.ToastNotification]::new($t);"
-            "[Windows.UI.Notifications.ToastNotificationManager]"
-            "::CreateToastNotifier('JARVIS').Show($n)"
+    client_timeout = max(1, min(int(timeout), 10))
+    if owner_username:
+        devices = db_read(
+            "SELECT device_id, owner_username FROM devices "
+            "WHERE revoked=0 AND owner_username=? ORDER BY created_at",
+            (owner_username,),
         )
-        subprocess.Popen(["powershell", "-Command", ps],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True
-    except Exception:
-        pass
-
-    # Method 3: msg command fallback
-    try:
-        subprocess.Popen(f'msg * /time:{timeout} "{safe_title}: {safe_msg}"',
-                         shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True
-    except Exception:
-        pass
+    else:
+        devices = db_read(
+            "SELECT device_id, owner_username FROM devices WHERE revoked=0 ORDER BY created_at"
+        )
+    for device in devices:
+        device_id = device.get("device_id")
+        owner = device.get("owner_username")
+        if not device_id or not owner or not is_online(device_id):
+            continue
+        result = call_device(
+            device_id,
+            "notify",
+            {"title": str(title)[:80], "body": str(message)[:300]},
+            timeout=client_timeout,
+            owner_username=owner,
+        )
+        if result.get("ok"):
+            return True
     return False

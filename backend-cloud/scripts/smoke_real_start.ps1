@@ -13,13 +13,16 @@ $process = $null
 $failed = $false
 $originalEnvironment = @{}
 
-foreach ($name in @("DB_BACKEND", "JARVIS_HOST", "JARVIS_PORT", "ALLOW_PUBLIC_BIND", "PYTHONUTF8", "JARVIS_DATA_DIR", "JARVIS_SKIP_DOTENV", "GROQ_KEY", "GEMINI_KEY", "OPENROUTER_KEY", "WEATHER_KEY")) {
+foreach ($name in @("DB_BACKEND", "JARVIS_ENV", "AUTH_MODE", "ALLOW_LOCAL_AUTH", "JARVIS_HOST", "JARVIS_PORT", "ALLOW_PUBLIC_BIND", "PYTHONUTF8", "JARVIS_DATA_DIR", "JARVIS_SKIP_DOTENV", "GROQ_KEY", "GEMINI_KEY", "OPENROUTER_KEY", "WEATHER_KEY")) {
     $originalEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
 }
 
 try {
     New-Item -ItemType Directory -Path $logRoot | Out-Null
     $env:DB_BACKEND = "sqlite"
+    $env:JARVIS_ENV = "development"
+    $env:AUTH_MODE = "local"
+    $env:ALLOW_LOCAL_AUTH = "0"
     $env:JARVIS_HOST = "127.0.0.1"
     $env:JARVIS_PORT = "$port"
     $env:ALLOW_PUBLIC_BIND = "0"
@@ -31,7 +34,8 @@ try {
     $env:OPENROUTER_KEY = "test-openrouter-key"
     $env:WEATHER_KEY = "test-weather-key"
 
-    $process = Start-Process -FilePath "py" -ArgumentList @("wsgi.py") `
+    $python = (Get-Command python -ErrorAction Stop).Source
+    $process = Start-Process -FilePath $python -ArgumentList @("wsgi.py") `
         -WorkingDirectory $backendDir -PassThru -WindowStyle Hidden `
         -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
 

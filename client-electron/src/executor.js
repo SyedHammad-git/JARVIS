@@ -10,7 +10,7 @@ const APP_ALLOWLIST = Object.freeze({
   paint: 'mspaint.exe',
 });
 
-const HIGH_RISK_ACTIONS = Object.freeze(['shutdown', 'restart']);
+const HIGH_RISK_ACTIONS = Object.freeze(['lock_screen']);
 const REPLAY_WINDOW_MS = 5 * 60 * 1000;
 const MAX_COMMAND_AGE_MS = 60 * 1000;
 

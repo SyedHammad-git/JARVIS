@@ -1,6 +1,4 @@
-"""Health endpoint database metrics are secret-free and test without Neon."""
-import threading
-
+"""Health endpoints report backend and database status without host statistics."""
 from flask import Flask
 
 import app.db as database
@@ -14,49 +12,59 @@ def _health_client():
     return app.test_client()
 
 
-def _live_background_threads(monkeypatch):
-    names = [
-        "WindowTracker", "SysMonitor", "MonitorEngine",
-        "SysEventMon", "HeartbeatEngine", "ReminderScheduler",
-    ]
-    threads = [type("ThreadState", (), {"name": name, "is_alive": lambda self: True})() for name in names]
-    monkeypatch.setattr(threading, "enumerate", lambda: threads)
+def _invalidate_health_cache():
+    core_routes._db_health_cache["payload"] = None
 
 
-def test_health_reports_neon_latency_vector_rows_and_no_connection_values(monkeypatch):
+def test_health_reports_neon_latency_vector_count_and_online_devices(monkeypatch):
     monkeypatch.setattr(database, "DB_BACKEND", "postgres")
     monkeypatch.setattr(database, "SQLITE_FALLBACK_ACTIVE", False)
-    monkeypatch.setattr("app.routes.core_routes.db_scalar", lambda _sql: 1)
-    monkeypatch.setattr("app.routes.core_routes.db_read", lambda _sql: [{"count": 17}])
-    monkeypatch.setattr("psutil.cpu_percent", lambda interval=0.1: 1)
-    _live_background_threads(monkeypatch)
+    monkeypatch.setattr(core_routes, "db_scalar", lambda _sql: 1)
 
-    response = _health_client().get("/api/health/details")
-    payload = response.get_json()
+    def read(sql, _params=()):
+        if "memory_vectors" in sql:
+            return [{"count": 17}]
+        if "FROM devices" in sql:
+            return [{"device_id": "dev-online"}, {"device_id": "dev-offline"}]
+        return []
 
-    assert response.status_code == 200
+    monkeypatch.setattr(core_routes, "db_read", read)
+    monkeypatch.setattr(
+        "app.devices.gateway.is_online",
+        lambda device_id: device_id == "dev-online",
+    )
+    _invalidate_health_cache()
+
+    client = _health_client()
+    payload = client.get("/api/health").get_json()
+    details = client.get("/api/health/details").get_json()
+
+    assert payload["status"] == "ok"
     assert payload["db_backend"] == "postgres"
     assert isinstance(payload["neon_select_1_latency_ms"], float)
     assert payload["pgvector_row_count"] == 17
     assert payload["sqlite_fallback_active"] is False
+    assert payload["online_device_count"] == 1
     assert "DATABASE_URL" not in str(payload)
     assert "password" not in str(payload).lower()
+    assert "cpu_pct" not in client.get("/api/sysinfo").get_json()
+    assert details["online_device_count"] == 1
 
 
 def test_health_reports_sqlite_fallback_without_neon_probe(monkeypatch):
     monkeypatch.setattr(database, "DB_BACKEND", "sqlite")
     monkeypatch.setattr(database, "SQLITE_FALLBACK_ACTIVE", True)
-    monkeypatch.setattr("app.routes.core_routes.db_scalar", lambda _sql: 1)
-    monkeypatch.setattr("app.routes.core_routes.db_read", lambda _sql: [])
-    monkeypatch.setattr("psutil.cpu_percent", lambda interval=0.1: 1)
-    _live_background_threads(monkeypatch)
+    monkeypatch.setattr(core_routes, "db_scalar", lambda _sql: 1)
+    monkeypatch.setattr(core_routes, "db_read", lambda _sql, _params=(): [])
+    _invalidate_health_cache()
 
-    payload = _health_client().get("/api/health/details").get_json()
+    payload = _health_client().get("/api/health").get_json()
 
     assert payload["db_backend"] == "sqlite"
     assert payload["neon_select_1_latency_ms"] is None
     assert payload["pgvector_row_count"] is None
     assert payload["sqlite_fallback_active"] is True
+    assert payload["online_device_count"] == 0
 
 
 def test_health_database_metrics_are_cached_for_30_seconds(monkeypatch):
@@ -64,7 +72,11 @@ def test_health_database_metrics_are_cached_for_30_seconds(monkeypatch):
     monkeypatch.setattr(database, "DB_BACKEND", "postgres")
     monkeypatch.setattr(database, "SQLITE_FALLBACK_ACTIVE", False)
     monkeypatch.setattr(core_routes, "db_scalar", lambda _sql: calls.append("select") or 1)
-    monkeypatch.setattr(core_routes, "db_read", lambda _sql: calls.append("vector_count") or [{"count": 3}])
+    monkeypatch.setattr(
+        core_routes,
+        "db_read",
+        lambda _sql, _params=(): calls.append("vector_count") or [{"count": 3}],
+    )
 
     first = core_routes._database_health_snapshot(now=100)
     second = core_routes._database_health_snapshot(now=129.9)
