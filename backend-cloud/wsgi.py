@@ -45,7 +45,7 @@ from app.extensions import socketio
 from app.bind import resolve_bind_host
 
 load_environment()
-_bind_host = resolve_bind_host() if __name__ == "__main__" else None
+_bind_host = resolve_bind_host()
 
 app = create_app()
 
