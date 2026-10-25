@@ -32,6 +32,8 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH  : Path = DATA_DIR / "jarvis.db"
 
 DB_BACKEND: str = os.environ.get("DB_BACKEND", "sqlite").lower().strip()
+SQLITE_FALLBACK_ACTIVE = False
+PG_RECOVERY_INTERVAL_SECONDS = 300
 
 # ════════════════════════════════════════════════════════════════════
 # SCHEMA — shared logical schema; SQLite and Postgres use converted forms
@@ -190,6 +192,18 @@ CREATE TABLE IF NOT EXISTS snapshots (
 );
 CREATE INDEX IF NOT EXISTS snapshots_expires_at_idx ON snapshots(expires_at);
 """
+_POSTGRES_VECTOR_SCHEMA = """
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE TABLE IF NOT EXISTS memory_vectors (
+    id TEXT PRIMARY KEY,
+    content TEXT NOT NULL,
+    meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+    embedding vector(768) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS memory_vectors_embedding_hnsw_idx
+    ON memory_vectors USING hnsw (embedding vector_cosine_ops);
+"""
 
 
 def _postgres_url(variable: str = "DATABASE_URL") -> str:
@@ -321,74 +335,77 @@ def _sqlite_init() -> None:
             conn.close()
 
 
+def _sqlite_adapt_legacy_insert(conn, sql: str, params: tuple = ()) -> tuple[str, tuple]:
+    insert = re.fullmatch(
+        r"\s*INSERT\s+(?:OR\s+(?:REPLACE|IGNORE)\s+)?INTO\s+"
+        r"([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*VALUES\s*\(([^)]*)\)\s*;?\s*",
+        sql,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not insert:
+        return sql, params
+    table = insert.group(1).lower()
+    columns = [column.strip() for column in insert.group(2).split(",")]
+    values = [value.strip() for value in insert.group(3).split(",")]
+    provided = {column.strip('"`[]').lower(): index for index, column in enumerate(columns)}
+    required = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    extra_params = []
+    for column in required:
+        name = column[1]
+        normalized_name = name.lower()
+        if (not column[3] or column[4] is not None or column[5]
+                or normalized_name in provided):
+            continue
+
+        is_timestamp = any(
+            marker in normalized_name
+            for marker in ("timestamp", "created", "updated", "_at")
+        )
+        source_names = (
+            (("updated_at", "created_at") if "updated" in normalized_name
+             else ("created_at", "updated_at"))
+            if is_timestamp
+            else ()
+        )
+        source_index = next(
+            (provided[source] for source in source_names if source in provided),
+            None,
+        )
+        source_param_index = (
+            sum(value == "?" for value in values[:source_index])
+            if source_index is not None
+            else None
+        )
+        if source_param_index is not None and source_param_index < len(params):
+            fallback = params[source_param_index]
+        elif is_timestamp:
+            fallback = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        elif "INT" in str(column[2]).upper():
+            fallback = 0
+        elif any(marker in str(column[2]).upper() for marker in ("REAL", "FLOA", "DOUB", "NUM")):
+            fallback = 0
+        elif "BLOB" in str(column[2]).upper():
+            fallback = b""
+        else:
+            fallback = ""
+
+        columns.append(name)
+        values.append("?")
+        extra_params.append(fallback)
+        provided[normalized_name] = len(params) + len(extra_params) - 1
+
+    if extra_params:
+        prefix = insert.group(0).split("(", 1)[0]
+        sql = f"{prefix}({','.join(columns)}) VALUES({','.join(values)})"
+        params = (*params, *extra_params)
+    return sql, params
+
+
 def _sqlite_write(sql: str, params: tuple = ()) -> bool:
     with db_lock:
         conn = _sqlite_connect()
         try:
-            insert = re.fullmatch(
-                r"\s*INSERT\s+(?:OR\s+(?:REPLACE|IGNORE)\s+)?INTO\s+"
-                r"([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*VALUES\s*\(([^)]*)\)\s*;?\s*",
-                sql,
-                flags=re.IGNORECASE | re.DOTALL,
-            )
-            if insert:
-                table = insert.group(1).lower()
-                columns = [column.strip() for column in insert.group(2).split(",")]
-                values = [value.strip() for value in insert.group(3).split(",")]
-                provided = {
-                    column.strip('"`[]').lower(): index
-                    for index, column in enumerate(columns)
-                }
-                required = conn.execute(f"PRAGMA table_info({table})").fetchall()
-                extra_params = []
-                for column in required:
-                    name = column[1]
-                    normalized_name = name.lower()
-                    if (not column[3] or column[4] is not None or column[5]
-                            or normalized_name in provided):
-                        continue
-
-                    is_timestamp = any(
-                        marker in normalized_name
-                        for marker in ("timestamp", "created", "updated", "_at")
-                    )
-                    source_names = (
-                        (("updated_at", "created_at") if "updated" in normalized_name
-                         else ("created_at", "updated_at"))
-                        if is_timestamp
-                        else ()
-                    )
-                    source_index = next(
-                        (provided[source] for source in source_names if source in provided),
-                        None,
-                    )
-                    source_param_index = (
-                        sum(value == "?" for value in values[:source_index])
-                        if source_index is not None
-                        else None
-                    )
-                    if source_param_index is not None and source_param_index < len(params):
-                        fallback = params[source_param_index]
-                    elif is_timestamp:
-                        fallback = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    elif "INT" in str(column[2]).upper():
-                        fallback = 0
-                    elif any(marker in str(column[2]).upper() for marker in ("REAL", "FLOA", "DOUB", "NUM")):
-                        fallback = 0
-                    elif "BLOB" in str(column[2]).upper():
-                        fallback = b""
-                    else:
-                        fallback = ""
-
-                    columns.append(name)
-                    values.append("?")
-                    extra_params.append(fallback)
-                    provided[normalized_name] = len(params) + len(extra_params) - 1
-
-                if extra_params:
-                    prefix = insert.group(0).split("(", 1)[0]
-                    sql = f"{prefix}({','.join(columns)}) VALUES({','.join(values)})"
-                    params = (*params, *extra_params)
+            sql, params = _sqlite_adapt_legacy_insert(conn, sql, params)
             conn.execute(sql, params)
             conn.commit()
             return True
@@ -398,6 +415,23 @@ def _sqlite_write(sql: str, params: tuple = ()) -> bool:
                 conn.rollback()
             except Exception:
                 pass   # connection may already be unusable — commit/rollback both no-ops then
+            return False
+        finally:
+            conn.close()
+
+
+def _sqlite_write_many(statements: list[tuple[str, tuple]]) -> bool:
+    with db_lock:
+        conn = _sqlite_connect()
+        try:
+            for sql, params in statements:
+                sql, params = _sqlite_adapt_legacy_insert(conn, sql, params)
+                conn.execute(sql, params)
+            conn.commit()
+            return True
+        except Exception as exc:
+            log.error("sqlite_write_many failed (%s)", type(exc).__name__)
+            conn.rollback()
             return False
         finally:
             conn.close()
@@ -510,6 +544,40 @@ def _postgres_init() -> None:
         raise
 
 
+def _probe_postgres() -> bool:
+    connection = None
+    try:
+        import psycopg2
+        connection = psycopg2.connect(_pg_dsn(), connect_timeout=5)
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+        return True
+    except Exception:
+        return False
+    finally:
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception:
+                pass
+
+
+def _postgres_recovery_worker() -> None:
+    while True:
+        time.sleep(PG_RECOVERY_INTERVAL_SECONDS)
+        if _probe_postgres():
+            log.error("Neon is reachable again; SQLite remains active; no data sync performed")
+            return
+
+
+def _start_postgres_recovery_monitor() -> None:
+    threading.Thread(
+        target=_postgres_recovery_worker,
+        name="NeonRecoveryMonitor",
+        daemon=True,
+    ).start()
+
+
 def _postgres_write(sql: str, params: tuple = ()) -> bool:
     pg_sql = _pg_placeholder(sql)
 
@@ -534,6 +602,37 @@ def _postgres_write(sql: str, params: tuple = ()) -> bool:
                 broken = True
                 raise
             log.error("pg_write failed (%s) | SQL: %s", type(exc).__name__, pg_sql[:120])
+            return False
+        finally:
+            if conn:
+                pool.putconn(conn, close=broken)
+
+    return _retry_pg_connection(write_once)
+
+
+def _postgres_write_many(statements: list[tuple[str, tuple]]) -> bool:
+    def write_once():
+        pool = _get_pg_pool()
+        conn = None
+        broken = False
+        try:
+            with db_lock:
+                conn = pool.getconn()
+                with conn.cursor() as cursor:
+                    for sql, params in statements:
+                        cursor.execute(_pg_placeholder(sql), params if params else None)
+                conn.commit()
+                return True
+        except Exception as exc:
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            if _is_pg_connection_error(exc):
+                broken = True
+                raise
+            log.error("pg_write_many failed (%s)", type(exc).__name__)
             return False
         finally:
             if conn:
@@ -584,16 +683,19 @@ def _postgres_scalar(sql: str, params: tuple = ()):
 # PUBLIC API
 # ════════════════════════════════════════════════════════════════════
 def init_db() -> None:
-    global DB_BACKEND
+    global DB_BACKEND, SQLITE_FALLBACK_ACTIVE
     if DB_BACKEND == "sqlite":
         _sqlite_init()
     elif DB_BACKEND == "postgres":
         try:
             _postgres_init()
         except Exception as exc:
-            print(f"[DB] ⚠ PostgreSQL unavailable ({type(exc).__name__}); falling back to SQLite")
+            SQLITE_FALLBACK_ACTIVE = True
+            log.error("PostgreSQL unavailable (%s); falling back to SQLite", type(exc).__name__)
+            print(f"[DB] ERROR: PostgreSQL unavailable ({type(exc).__name__}); falling back to SQLite")
             DB_BACKEND = "sqlite"
             _sqlite_init()
+            _start_postgres_recovery_monitor()
     else:
         raise ValueError(f"[DB] Unknown DB_BACKEND='{DB_BACKEND}'. Use: sqlite | postgres")
 
@@ -602,6 +704,12 @@ def db_write(sql: str, params: tuple = ()) -> bool:
     if DB_BACKEND == "sqlite":    return _sqlite_write(sql, params)
     if DB_BACKEND == "postgres":  return _postgres_write(sql, params)
     raise NotImplementedError(f"db_write: unknown backend {DB_BACKEND}")
+
+
+def db_write_many(statements: list[tuple[str, tuple]]) -> bool:
+    if DB_BACKEND == "sqlite":    return _sqlite_write_many(statements)
+    if DB_BACKEND == "postgres":  return _postgres_write_many(statements)
+    raise NotImplementedError(f"db_write_many: unknown backend {DB_BACKEND}")
 
 
 def db_read(sql: str, params: tuple = ()) -> list[dict]:
