@@ -5,7 +5,13 @@ import { useCallback, useEffect, useState } from "react";
 import { ApiError, apiFetch } from "@/lib/api";
 import { PROVIDERS, ProviderId } from "@/lib/providers";
 
-type ProviderStatus = { provider: ProviderId; configured: boolean; last4: string };
+type ProviderStatus = {
+  provider: ProviderId;
+  configured: boolean;
+  last4: string;
+  status?: string;
+  last_tested_at?: string;
+};
 
 export default function KeySettingsPage() {
   const { getToken } = useAuth();
@@ -108,7 +114,11 @@ export default function KeySettingsPage() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2 id={`${provider.id}-heading`} className="text-xl font-bold">{provider.name}{provider.optional ? " (optional)" : ""}</h2>
-                  <p className="muted mt-1 text-sm">Status: {loading ? "Loading…" : status?.configured ? `Configured · •••• ${status.last4}` : "Not configured"}</p>
+                  <p className="muted mt-1 text-sm">
+                    Status: {loading ? "Loading…" : status?.configured
+                      ? `Configured · •••• ${status.last4}${status.status && status.status !== "saved" ? ` · ${status.status}` : ""}`
+                      : "Not configured"}
+                  </p>
                 </div>
                 <a href={provider.url} target="_blank" rel="noreferrer" className="text-sm">Where do I get this key?</a>
               </div>

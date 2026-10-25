@@ -56,12 +56,12 @@ describe("apiFetch", () => {
   it("maps no_api_key to a clear actionable error", async () => {
     vi.stubEnv("NEXT_PUBLIC_BACKEND_URL", "https://api.example.test");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ ok: false, error: "no_api_key" }), { status: 428 }),
+      new Response(JSON.stringify({ ok: false, error: "no_api_key" }), { status: 400 }),
     );
 
     await expect(apiFetch(vi.fn().mockResolvedValue("token"), "/api/agent")).rejects.toMatchObject({
       code: "no_api_key",
-      status: 428,
+      status: 400,
       message: "Add an AI provider key in Settings to start chatting.",
     });
   });

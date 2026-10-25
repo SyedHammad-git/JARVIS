@@ -17,7 +17,7 @@ describe("dashboard chat", () => {
   it("shows the API key banner when chat returns no_api_key", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).endsWith("/api/agent")) {
-        return new Response(JSON.stringify({ ok: false, error: "no_api_key" }), { status: 428 });
+        return new Response(JSON.stringify({ ok: false, error: "no_api_key" }), { status: 400 });
       }
       return new Response(JSON.stringify({ devices: [] }), { status: 200 });
     });

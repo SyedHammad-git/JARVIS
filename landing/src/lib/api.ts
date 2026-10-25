@@ -96,7 +96,7 @@ export async function apiFetch<T>(
     if (code === "api_key_storage_unavailable") {
       throw new ApiError("Secure key storage is not configured on the backend.", code, response.status);
     }
-    if (code === "pair_code_expired_or_invalid") {
+    if (code === "pair_code_invalid") {
       throw new ApiError("This pairing code has expired or is invalid. Generate a new one.", code, response.status);
     }
     throw new ApiError(
