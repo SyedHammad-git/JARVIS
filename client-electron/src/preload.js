@@ -10,7 +10,7 @@ function subscribe(channel, callback) {
 
 contextBridge.exposeInMainWorld('jarvis', Object.freeze({
   getPairing: () => ipcRenderer.invoke('pairing:get'),
-  saveAndConnect: (config) => ipcRenderer.invoke('pairing:save-connect', config),
+  redeemAndConnect: (details) => ipcRenderer.invoke('pairing:redeem-connect', details),
   openPairing: () => ipcRenderer.invoke('pairing:open'),
   connect: () => ipcRenderer.invoke('device:connect'),
   getStatus: () => ipcRenderer.invoke('device:status'),

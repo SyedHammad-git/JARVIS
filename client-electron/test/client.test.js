@@ -11,6 +11,28 @@ const { createApproval } = require('../src/approval');
 const { createStore, validateConfig } = require('../src/store');
 const { createAudit } = require('../src/audit');
 const { createRevocationMonitor, isRevokedConnectError, isUnauthorizedConnectError } = require('../src/revocation');
+const { redeemPairCode, validateBackendUrl } = require('../src/pairing');
+
+test('pairing redeems a short-lived code and validates the backend URL', async () => {
+  assert.equal(validateBackendUrl('http://localhost:5000', true), 'http://localhost:5000');
+  assert.throws(() => validateBackendUrl('http://example.test'), /insecure_url/);
+  const calls = [];
+  const config = await redeemPairCode(
+    { url: 'https://backend.example.test', code: 'abc234de' },
+    async (url, options) => {
+      calls.push({ url, options });
+      return new Response(JSON.stringify({ device_id: 'device-1', token: 'one-time-token' }), { status: 200 });
+    },
+  );
+  assert.deepEqual(config, {
+    url: 'https://backend.example.test',
+    deviceId: 'device-1',
+    token: 'one-time-token',
+  });
+  assert.equal(calls[0].url, 'https://backend.example.test/pairing/redeem-code');
+  assert.deepEqual(JSON.parse(calls[0].options.body), { code: 'ABC234DE', name: 'PC' });
+  assert.throws(() => validateBackendUrl('https://backend.example.test/path'), /insecure_url/);
+});
 
 test('executor launches only allowlisted apps with shell disabled', async () => {
   const calls = [];

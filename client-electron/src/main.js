@@ -10,6 +10,7 @@ const { createCamera } = require('./camera');
 const { createCommandHandler, createExecutor, HIGH_RISK_ACTIONS } = require('./executor');
 const { createRevocationMonitor, isRevokedConnectError, isUnauthorizedConnectError } = require('./revocation');
 const { loadPreferences, persistedPreferences } = require('./preferences');
+const { redeemPairCode } = require('./pairing');
 const { createStore, validateConfig } = require('./store');
 const { denyWindowPermissions } = require('./window-security');
 
@@ -244,12 +245,9 @@ ipcMain.handle('pairing:get', () => {
     return { url: '', deviceId: '', error: 'Stored pairing is unavailable; pair again.' };
   }
 });
-ipcMain.handle('pairing:save-connect', async (_event, config) => {
-  const existing = store.load();
-  const value = config && config.token === '' && existing && config.deviceId === existing.deviceId
-    ? { ...config, token: existing.token }
-    : config;
-  const saved = store.save(value);
+ipcMain.handle('pairing:redeem-connect', async (_event, details) => {
+  const config = await redeemPairCode(details);
+  const saved = store.save(config);
   revoked = false;
   await connectDevice();
   return saved;

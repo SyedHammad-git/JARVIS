@@ -5,9 +5,6 @@ const message = document.querySelector('#message');
 
 window.jarvis.getPairing().then((config) => {
   document.querySelector('#url').value = config.url;
-  document.querySelector('#device-id').value = config.deviceId;
-  document.querySelector('#token').required = !config.hasToken;
-  document.querySelector('#token').placeholder = config.hasToken ? 'Saved securely; leave blank to keep it' : '';
   if (config.error) message.textContent = config.error;
 });
 
@@ -17,17 +14,19 @@ form.addEventListener('submit', async (event) => {
   button.disabled = true;
   message.textContent = 'Connecting…';
   try {
-    await window.jarvis.saveAndConnect({
+    await window.jarvis.redeemAndConnect({
       url: document.querySelector('#url').value,
-      deviceId: document.querySelector('#device-id').value,
-      token: document.querySelector('#token').value,
+      code: document.querySelector('#code').value,
     });
-    document.querySelector('#token').value = '';
-    message.textContent = 'Credentials encrypted. Connection started.';
+    document.querySelector('#code').value = '';
+    message.textContent = 'Device paired securely. Connection started.';
   } catch (error) {
-    message.textContent = error.message === 'insecure_url'
-      ? 'Use an HTTPS backend URL. HTTP is allowed only for localhost in development.'
-      : 'Could not save or connect. Check the URL and pairing details.';
+    message.textContent = {
+      insecure_url: 'Use an HTTPS backend URL. HTTP is allowed only for localhost in development.',
+      invalid_pair_code: 'Enter the 8-character code shown in your JARVIS dashboard.',
+      pair_code_expired_or_invalid: 'That code has expired or is invalid. Generate a new code in your dashboard.',
+      backend_unavailable: 'Could not reach the backend. Check the URL and your connection.',
+    }[error.message] || 'Pairing could not be completed. Check the code and backend URL.';
   } finally {
     button.disabled = false;
   }

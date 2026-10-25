@@ -12,15 +12,13 @@
   <main>
     <p class="eyebrow">DEVICE SETUP</p>
     <h1>Pair this PC</h1>
-    <p class="intro">Enter the backend URL and the one-time device credentials.</p>
+    <p class="intro">Install JARVIS on your PC, then enter the one-time code from your phone.</p>
     <form id="pairing-form">
       <label for="url">Backend URL</label>
       <input id="url" name="url" type="url" required autocomplete="url" placeholder="https://jarvis.example.com">
-      <label for="device-id">Device ID</label>
-      <input id="device-id" name="deviceId" type="text" required autocomplete="off" spellcheck="false">
-      <label for="token">Pairing token</label>
-      <input id="token" name="token" type="password" autocomplete="new-password" spellcheck="false">
-      <button type="submit">Save &amp; Connect</button>
+      <label for="code">8-character pairing code</label>
+      <input id="code" name="code" type="text" required minlength="8" maxlength="8" autocomplete="one-time-code" spellcheck="false" autocapitalize="characters">
+      <button type="submit">Pair &amp; Connect</button>
     </form>
     <p id="message" role="status" aria-live="polite"></p>
   </main>
