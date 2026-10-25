@@ -28,7 +28,7 @@ def agent_chat():
     session_id = data.get("session_id", "default")
     confirmed  = bool(data.get("confirmed"))
     result     = run_agent(user_input, session_id=session_id,
-                           ctx={"confirmed": confirmed})
+                           ctx={"confirmed": confirmed, "snapshot_user": request.remote_addr or "unknown"})
     return jsonify({
         "ok":         result.get("ok"),
         "reply":      result.get("reply",""),

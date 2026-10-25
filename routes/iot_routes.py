@@ -16,6 +16,7 @@ from monitor import (
     _gen_frames
 )
 from error_utils import api_errors
+from config import EXECUTION_MODE
 
 log = logging.getLogger("jarvis.routes.iot")
 iot = Blueprint("iot", __name__)
@@ -111,6 +112,8 @@ def motion_config():
 @iot.route("/video_feed/<int:cam_id>")
 @api_errors
 def video_feed(cam_id):
+    if EXECUTION_MODE != "local":
+        return jsonify({"ok": False, "error": "local_camera_disabled"}), 403
     return Response(_gen_frames(cam_id),
                     mimetype="multipart/x-mixed-replace; boundary=frame")
 

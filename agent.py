@@ -70,6 +70,23 @@ def execute_tool(name: str, args: dict, ctx: dict | None = None) -> str:
         })
 
     mode = ctx.get("execution_mode") or EXECUTION_MODE
+    if name == "take_snapshot":
+        from vision.snapshots import snapshot_ack_to_text, snapshot_rate_limiter
+        user_key = ctx.get("snapshot_user") or ctx.get("device_id") or "unknown"
+        if not snapshot_rate_limiter.allow(user_key):
+            return "Camera snapshot rate limit reached. Please try again shortly."
+        if mode != "local":
+            from devices.gateway import call_device
+            ack = call_device(
+                ctx.get("device_id") or DEVICE_ID,
+                name,
+                args or {},
+                timeout=20,
+            )
+        else:
+            ack = tool.local_impl(args or {})
+        return snapshot_ack_to_text(ack, (args or {}).get("question", ""))
+
     if tool.where == "device":
         if mode != "local":
             from devices.gateway import call_device

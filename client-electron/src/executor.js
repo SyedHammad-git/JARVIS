@@ -48,7 +48,7 @@ function launchDetached(spawn, executable, args = []) {
   });
 }
 
-function createExecutor({ shell, Notification, spawn = defaultSpawn, osModule = os }) {
+function createExecutor({ shell, Notification, cameraSnapshot, spawn = defaultSpawn, osModule = os }) {
   async function execute(action, args) {
     if (typeof action !== 'string' || !Object.hasOwn(handlers, action)) {
       return { ok: false, error: 'unknown_action' };
@@ -99,6 +99,20 @@ function createExecutor({ shell, Notification, spawn = defaultSpawn, osModule = 
       notification.show();
       return { ok: true, message: 'Notification shown' };
     },
+    async take_snapshot(args) {
+      if (!hasOnlyKeys(args, ['question', 'width', 'quality'])) return { ok: false, error: 'invalid_arguments' };
+      if (args.question !== undefined && (typeof args.question !== 'string' || args.question.length > 500)) {
+        return { ok: false, error: 'invalid_arguments' };
+      }
+      if (!cameraSnapshot) return { ok: false, error: 'camera_disabled' };
+      const snapshot = await cameraSnapshot({
+        width: args.width ?? 640,
+        quality: args.quality ?? 0.7,
+        question: args.question || '',
+      });
+      if (snapshot?.ok === false) return snapshot;
+      return { ok: true, ...snapshot };
+    },
     async lock_screen(args) {
       if (Object.keys(args).length) return { ok: false, error: 'invalid_arguments' };
       await launchDetached(spawn, 'rundll32.exe', ['user32.dll,LockWorkStation']);
@@ -144,7 +158,15 @@ function summarizeArgs(action, args) {
   if (action === 'notify') {
     return { title: typeof args.title === 'string' ? args.title.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 80) : '[invalid]' };
   }
+  if (action === 'take_snapshot') {
+    return { width: args.width ?? 640, quality: args.quality ?? 0.7 };
+  }
   return {};
+}
+
+function summarizeResult(action, result) {
+  if (action !== 'take_snapshot') return result;
+  return { ok: result?.ok === true, error: result?.error, mime: result?.mime };
 }
 
 function createCommandHandler({ execute, isRemoteEnabled, audit, now = Date.now }) {
@@ -177,7 +199,7 @@ function createCommandHandler({ execute, isRemoteEnabled, audit, now = Date.now 
     }
 
     try {
-      audit.write({ action, args: summarizeArgs(action, args), result });
+      audit.write({ action, args: summarizeArgs(action, args), result: summarizeResult(action, result) });
     } catch {
       // Audit failures must not suppress the protocol acknowledgement.
     }
@@ -197,4 +219,5 @@ module.exports = {
   createExecutor,
   parseTimestamp,
   summarizeArgs,
+  summarizeResult,
 };

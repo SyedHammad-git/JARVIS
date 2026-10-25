@@ -17,14 +17,16 @@ from threading import Lock
 
 import psutil
 
-from config import CV2_OK, REQUESTS_OK, _req, cache, stat_lock
+from config import CV2_OK, EXECUTION_MODE, REQUESTS_OK, _req, cache, stat_lock
 from database import db_read, db_write, ts, DATA_DIR
 from auth import add_alert
 from notifications import send_discord_alert
 
 log = logging.getLogger("jarvis.monitor")
 
-if CV2_OK:
+LOCAL_CAMERA_ENABLED = CV2_OK and EXECUTION_MODE == "local"
+
+if LOCAL_CAMERA_ENABLED:
     import cv2
 
 # ── Module-level state ────────────────────────────────────────────
@@ -160,7 +162,7 @@ def monitor():
 
 # ── Camera helpers ────────────────────────────────────────────────
 def _open_cap(cam: dict):
-    if not CV2_OK:
+    if not LOCAL_CAMERA_ENABLED:
         return None
     src = cam.get("source", 0)
     try:
@@ -175,7 +177,7 @@ def _open_cap(cam: dict):
 
 
 def _gen_frames(cam_id: int):
-    if not CV2_OK:
+    if not LOCAL_CAMERA_ENABLED:
         yield b""
         return
 

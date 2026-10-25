@@ -1,11 +1,12 @@
 'use strict';
 
-const { app, BrowserWindow, dialog, ipcMain, Menu, Notification, safeStorage, shell, Tray } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, Notification, safeStorage, session, shell, Tray } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { io } = require('socket.io-client');
 const { createApproval } = require('./approval');
 const { createAudit } = require('./audit');
+const { createCamera } = require('./camera');
 const { createCommandHandler, createExecutor, HIGH_RISK_ACTIONS } = require('./executor');
 const { createRevocationMonitor, isRevokedConnectError, isUnauthorizedConnectError } = require('./revocation');
 const { createStore, validateConfig } = require('./store');
@@ -18,7 +19,6 @@ if (!app.requestSingleInstanceLock()) {
 const store = createStore({ app, safeStorage });
 const audit = createAudit({ app });
 const approval = createApproval({ dialog });
-const executor = createExecutor({ shell, Notification });
 const preferencesPath = path.join(app.getPath('userData'), 'preferences.json');
 let preferences = { remoteEnabled: true, cameraAllowed: false, startWithWindows: false };
 let tray;
@@ -43,6 +43,16 @@ try {
 } catch {
   // First run starts with remote control enabled and camera access disabled.
 }
+
+const camera = createCamera({
+  BrowserWindow,
+  session,
+  ipcMain,
+  Notification,
+  audit,
+  isAllowed: () => preferences.cameraAllowed,
+});
+const executor = createExecutor({ shell, Notification, cameraSnapshot: (options) => camera.snapshot(options) });
 
 function savePreferences() {
   fs.writeFileSync(preferencesPath, JSON.stringify(preferences), { encoding: 'utf8', mode: 0o600 });

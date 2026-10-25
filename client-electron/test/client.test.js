@@ -243,3 +243,19 @@ test('approval accepts only the explicit Approve response', async () => {
   const approval = createApproval({ dialog: { showMessageBox: async () => ({ response: 0 }) } });
   assert.equal(await approval.request('restart'), true);
 });
+
+test('snapshot executor returns a valid acknowledged image payload', async () => {
+  const executor = createExecutor({
+    shell: { openExternal: async () => {} },
+    Notification: null,
+    cameraSnapshot: async (options) => {
+      assert.deepEqual(options, { width: 640, quality: 0.7, question: 'Describe this.' });
+      return { image_b64: 'AQID', mime: 'image/jpeg' };
+    },
+  });
+  assert.deepEqual(await executor.execute('take_snapshot', { question: 'Describe this.' }), {
+    ok: true,
+    image_b64: 'AQID',
+    mime: 'image/jpeg',
+  });
+});

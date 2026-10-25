@@ -8,6 +8,8 @@ No arbitrary shell strings. No shell=True.
 from __future__ import annotations
 
 import logging
+import base64
+import math
 import os
 import re
 import subprocess
@@ -259,6 +261,40 @@ def tool_describe_screen(_args=None):
         return _friendly(e)
 
 
+def tool_take_snapshot(args=None):
+    from config import EXECUTION_MODE, CV2_OK
+    if EXECUTION_MODE != "local" or not CV2_OK:
+        return {"ok": False, "error": "camera_unavailable"}
+    args = args or {}
+    width = args.get("width", 640)
+    quality = args.get("quality", 0.7)
+    if not isinstance(width, int) or width < 160 or width > 1920:
+        return {"ok": False, "error": "invalid_arguments"}
+    if not isinstance(quality, (int, float)) or not math.isfinite(quality) or quality < 0.1 or quality > 0.95:
+        return {"ok": False, "error": "invalid_arguments"}
+    import cv2
+
+    capture = cv2.VideoCapture(0)
+    try:
+        if not capture.isOpened():
+            return {"ok": False, "error": "camera_unavailable"}
+        success, frame = capture.read()
+        if not success:
+            return {"ok": False, "error": "camera_unavailable"}
+        height, frame_width = frame.shape[:2]
+        if frame_width > width:
+            ratio = width / frame_width
+            frame = cv2.resize(frame, (width, max(1, round(height * ratio))))
+        success, encoded = cv2.imencode(
+            ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, round(quality * 100)]
+        )
+        if not success:
+            return {"ok": False, "error": "camera_capture_failed"}
+        return {"image_b64": base64.b64encode(encoded.tobytes()).decode("ascii"), "mime": "image/jpeg"}
+    finally:
+        capture.release()
+
+
 def tool_control_volume(action, level=None):
     if not PYAUTOGUI_OK:
         return "Volume control unavailable (no display)."
@@ -438,6 +474,20 @@ register(Tool(
     parameters={"type": "object", "properties": {}},
     where="device", risk="medium",
     local_impl=lambda a: tool_describe_screen(),
+))
+register(Tool(
+    name="take_snapshot",
+    description="Take one on-demand camera snapshot and answer a question about the image.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "question": {"type": "string"},
+            "width": {"type": "integer", "minimum": 160, "maximum": 1920},
+            "quality": {"type": "number", "minimum": 0.1, "maximum": 0.95},
+        },
+    },
+    where="device", risk="medium",
+    local_impl=tool_take_snapshot,
 ))
 register(Tool(
     name="control_volume",
