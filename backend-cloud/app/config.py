@@ -4,6 +4,7 @@ FIXED: H3 secret key, M1 GEMINI_URL, M2 work_session lock, M4 ai_router lock
 """
 import os
 import secrets
+from contextvars import ContextVar
 import time
 from threading import Lock
 
@@ -59,15 +60,27 @@ _API_KEY_NAMES = {"GROQ_KEY", "GEMINI_KEY", "OPENROUTER_KEY", "WEATHER_KEY"}
 _API_KEY_ENV_SNAPSHOT = {
     name: os.environ.get(name) for name in _API_KEY_NAMES
 }
+_user_api_keys: ContextVar[dict[str, str] | None] = ContextVar("user_api_keys", default=None)
 
 
 def get_api_key(name: str) -> str:
     if name not in _API_KEY_NAMES:
         raise ValueError(f"Unsupported API key name: {name}")
+    user_keys = _user_api_keys.get()
+    if user_keys is not None and user_keys.get(name):
+        return user_keys[name]
     value = os.environ.get(name)
     if value != _API_KEY_ENV_SNAPSHOT[name]:
         return value or ""
     return globals()[name]
+
+
+def set_user_api_keys(keys: dict[str, str]):
+    return _user_api_keys.set(dict(keys))
+
+
+def reset_user_api_keys(token) -> None:
+    _user_api_keys.reset(token)
 
 
 def refresh_api_keys() -> None:

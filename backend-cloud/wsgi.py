@@ -49,15 +49,16 @@ app = create_app()
 
 try:
     from flask_limiter import Limiter
-    from flask_limiter.util import get_remote_address
     _LIMITER_OK = True
 except ImportError:
     _LIMITER_OK = False
     print("[SERVER] ⚠ flask-limiter not installed — pip install flask-limiter")
 
 if _LIMITER_OK:
+    from app.security import get_client_ip
+
     limiter = Limiter(
-        get_remote_address,
+        get_client_ip,
         app=app,
         default_limits=["200 per minute"],
         storage_uri="memory://",
@@ -70,15 +71,6 @@ import app.config as app_config
 app.config["SECRET_KEY"] = getattr(app_config, "FLASK_SECRET", app.config.get("SECRET_KEY"))
 app.config["JSON_SORT_KEYS"] = False
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024
-
-# ── 4. CORS ───────────────────────────────────────────────────────
-CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*")
-try:
-    from flask_cors import CORS
-    CORS(app, origins=CORS_ORIGINS, supports_credentials=False)
-    log.info("CORS enabled (origins: %s)", CORS_ORIGINS)
-except ImportError:
-    log.warning("flask-cors not installed — CORS headers missing (pip install flask-cors)")
 
 log.info("All blueprints registered — %d routes total",
          len(list(app.url_map.iter_rules())))
@@ -154,6 +146,8 @@ print()
 # plus a message queue such as Redis):
 #   gunicorn --worker-class gthread --threads 100 -w 1 server:app
 if __name__ == "__main__":
+    if os.environ.get("JARVIS_ENV", "development").lower() == "production":
+        raise RuntimeError("Production mode must be launched with Gunicorn; do not run wsgi.py directly")
     host  = app.config["JARVIS_HOST"]
     port  = int(os.environ.get("JARVIS_PORT", 5000))
     debug = os.environ.get("JARVIS_DEBUG", "false").lower() == "true"

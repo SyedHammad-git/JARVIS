@@ -1,0 +1,182 @@
+import re
+import uuid
+from datetime import datetime, timezone
+
+import pyotp
+import pytest
+from flask import Flask, jsonify, request
+from werkzeug.routing import UUIDConverter
+
+from app import create_app
+from app.authentication import create_user
+from app.security import (
+    configure_proxy,
+    get_client_ip,
+    validate_production_config,
+)
+
+PUBLIC_API = {"/api/ping", "/api/health", "/api/auth/login"}
+
+
+def _rule_path(app, rule, method):
+    values = {}
+    for name, converter in rule._converters.items():
+        class_name = type(converter).__name__
+        if class_name == "IntegerConverter":
+            values[name] = 1
+        elif class_name == "FloatConverter":
+            values[name] = 1.0
+        elif isinstance(converter, UUIDConverter):
+            values[name] = uuid.UUID("12345678-1234-5678-1234-567812345678")
+        elif class_name == "PathConverter":
+            values[name] = "sample/path"
+        else:
+            values[name] = "security-test"
+    return app.url_map.bind("localhost").build(rule.endpoint, values=values, method=method)
+
+
+def test_all_api_rules_require_auth_except_explicit_public_routes():
+    app = create_app(testing=True)
+    client = app.test_client()
+    api_rules = [rule for rule in app.url_map.iter_rules() if rule.rule.startswith("/api/")]
+
+    assert api_rules
+    for rule in api_rules:
+        if rule.rule in PUBLIC_API:
+            continue
+        methods = sorted(rule.methods - {"HEAD", "OPTIONS"})
+        assert methods, rule.rule
+        for method in methods:
+            response = client.open(_rule_path(app, rule, method), method=method)
+            assert response.status_code == 401, f"{method} {rule.rule} was not guarded"
+
+    assert client.get("/api/ping").status_code == 200
+    health = client.get("/api/health")
+    assert health.status_code == 200
+    assert set(health.get_json()) == {"status", "version"}
+    assert client.get("/api/auth/login").status_code == 200
+
+
+def test_login_requires_csrf_and_password_totp_session(monkeypatch):
+    from app.routes import auth_routes
+
+    auth_routes._attempts.clear()
+    auth_routes._locked_until.clear()
+    secret = pyotp.random_base32()
+    assert create_user("c1-user", "a-strong-test-password", secret)
+    client = create_app(testing=True).test_client()
+
+    blocked = client.post("/api/auth/login", json={"username": "c1-user"})
+    assert blocked.status_code == 403
+
+    csrf = client.get("/api/auth/login").get_json()["csrf_token"]
+    response = client.post(
+        "/api/auth/login",
+        json={
+            "username": "c1-user",
+            "password": "a-strong-test-password",
+            "totp": pyotp.TOTP(secret).now(),
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert response.status_code == 200
+    assert response.get_json()["ok"] is True
+    assert response.headers.get("Set-Cookie", "").find("HttpOnly") >= 0
+    assert "Secure" in response.headers.get("Set-Cookie", "")
+    assert "SameSite=Strict" in response.headers.get("Set-Cookie", "")
+
+    csrf_after_login = response.get_json()["csrf_token"]
+    protected = client.post(
+        "/api/agent/clear",
+        json={},
+        headers={"X-CSRF-Token": csrf_after_login},
+    )
+    assert protected.status_code != 401
+
+
+def test_login_rate_limits_after_five_failed_attempts():
+    from app.routes import auth_routes
+
+    auth_routes._attempts.clear()
+    auth_routes._locked_until.clear()
+    client = create_app(testing=True).test_client()
+    csrf = client.get("/api/auth/login").get_json()["csrf_token"]
+    for _ in range(5):
+        response = client.post(
+            "/api/auth/login",
+            json={"username": "missing-user", "password": "wrong", "totp": "000000"},
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert response.status_code == 401
+    throttled = client.post(
+        "/api/auth/login",
+        json={"username": "missing-user", "password": "wrong", "totp": "000000"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert throttled.status_code == 429
+
+
+def test_proxyfix_trusts_forwarded_ip_only_when_hops_configured(monkeypatch):
+    app = Flask("proxy-test")
+    monkeypatch.setenv("TRUSTED_PROXY_HOPS", "0")
+    configure_proxy(app)
+
+    @app.get("/")
+    def client_ip():
+        return jsonify({"ip": get_client_ip()})
+
+    response = app.test_client().get("/", headers={"X-Forwarded-For": "203.0.113.44"})
+    assert response.get_json()["ip"] != "203.0.113.44"
+
+    forwarded_app = Flask("proxy-trusted-test")
+    monkeypatch.setenv("TRUSTED_PROXY_HOPS", "1")
+    configure_proxy(forwarded_app)
+
+    @forwarded_app.get("/")
+    def forwarded_ip():
+        return jsonify({"ip": get_client_ip()})
+
+    response = forwarded_app.test_client().get(
+        "/", headers={"X-Forwarded-For": "203.0.113.44"}
+    )
+    assert response.get_json()["ip"] == "203.0.113.44"
+
+
+def test_security_headers_and_explicit_cors(monkeypatch):
+    monkeypatch.setenv("CORS_ORIGINS", "https://jarvis.example.test")
+    app = create_app(testing=True)
+    response = app.test_client().get(
+        "/", headers={"Origin": "https://jarvis.example.test"}
+    )
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["X-Frame-Options"] == "DENY"
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+    assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+    assert response.headers["Access-Control-Allow-Origin"] == "https://jarvis.example.test"
+    api = app.test_client().get("/api/ping")
+    assert api.headers["Cache-Control"] == "no-store"
+
+
+def test_production_rejects_missing_or_weak_configuration(monkeypatch):
+    monkeypatch.setenv("JARVIS_ENV", "production")
+    monkeypatch.setenv("AUTH_ENABLED", "1")
+    monkeypatch.setenv("FLASK_SECRET", "weak")
+    monkeypatch.setenv("CORS_ORIGINS", "https://jarvis.example.test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://pooler.invalid/db")
+    with pytest.raises(RuntimeError, match="FLASK_SECRET"):
+        validate_production_config()
+
+    monkeypatch.setenv("FLASK_SECRET", "strong-test-secret-value-0123456789abcdef")
+    monkeypatch.setenv("CORS_ORIGINS", "*")
+    with pytest.raises(RuntimeError, match="CORS_ORIGINS"):
+        validate_production_config()
+
+    monkeypatch.setenv("CORS_ORIGINS", "https://jarvis.example.test")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    with pytest.raises(RuntimeError, match="DATABASE_URL"):
+        validate_production_config()
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://pooler.invalid/db")
+    monkeypatch.setenv("AUTH_ENABLED", "0")
+    with pytest.raises(RuntimeError, match="AUTH_ENABLED"):
+        validate_production_config()

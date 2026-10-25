@@ -3,17 +3,27 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 import secrets
 import time
 from threading import Lock
 
-from app.db import db_read, db_write, ts
+from app.db import db_read, db_write, db_write_returning, ts
 
 log = logging.getLogger("jarvis.devices")
 
 _DUMMY_HASH = "0" * 64
+DEFAULT_SCOPES = {
+    "allow_open_app": False,
+    "allow_camera": False,
+    "allow_notify": False,
+    "allow_lock": False,
+}
+ALLOWED_SCOPE_NAMES = frozenset(DEFAULT_SCOPES)
 DEVICE_STATUS_CACHE_TTL = 60
+PAIR_CODE_TTL_SECONDS = 600
+PAIR_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 _device_status_cache_lock = Lock()
 _device_status_cache: dict[str, tuple[dict | None, float]] = {}
 
@@ -22,15 +32,49 @@ def hash_token(token: str) -> str:
     return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
 
 
-def issue_device(name: str) -> tuple[str, str]:
+def create_pair_code(owner_username: str, name: str = "PC") -> tuple[str, float]:
+    db_write("DELETE FROM pairing_codes WHERE expires_at<=?", (time.time(),))
+    for _ in range(5):
+        code = "".join(secrets.choice(PAIR_CODE_ALPHABET) for _ in range(8))
+        expires_at = time.time() + PAIR_CODE_TTL_SECONDS
+        created = db_write(
+            "INSERT INTO pairing_codes(code_hash,owner_username,name,expires_at) VALUES(?,?,?,?)",
+            (hash_token(code), owner_username, name, expires_at),
+        )
+        if created:
+            return code, expires_at
+    raise RuntimeError("Failed to create a unique device pairing code")
+
+
+def redeem_pair_code(code: str) -> tuple[str, str, str] | None:
+    rows = db_write_returning(
+        "DELETE FROM pairing_codes WHERE code_hash=? AND expires_at>? RETURNING owner_username,name",
+        (hash_token(code), time.time()),
+    )
+    if not rows:
+        return None
+    owner, name = rows[0]["owner_username"], rows[0]["name"]
+    device_id, token = issue_device(name, owner)
+    return device_id, token, name
+
+
+def issue_device(name: str, owner_username: str) -> tuple[str, str]:
     """Create a device row. Returns (device_id, plaintext_token) — token is never stored."""
     device_id = "dev_" + secrets.token_urlsafe(12)
     token = secrets.token_urlsafe(32)
     now = ts()
     ok = db_write(
-        "INSERT INTO devices(device_id,name,token_hash,revoked,created_at,last_seen) "
-        "VALUES(?,?,?,0,?,?)",
-        (device_id, (name or "PC").strip() or "PC", hash_token(token), now, ""),
+        "INSERT INTO devices(device_id,name,token_hash,owner_username,scopes,revoked,created_at,last_seen) "
+        "VALUES(?,?,?,?,?,0,?,?)",
+        (
+            device_id,
+            (name or "PC").strip() or "PC",
+            hash_token(token),
+            owner_username,
+            json.dumps(DEFAULT_SCOPES, sort_keys=True),
+            now,
+            "",
+        ),
     )
     if not ok:
         raise RuntimeError("Failed to store device pairing")
@@ -38,10 +82,11 @@ def issue_device(name: str) -> tuple[str, str]:
     return device_id, token
 
 
-def list_devices() -> list[dict]:
+def list_devices(owner_username: str) -> list[dict]:
     rows = db_read(
         "SELECT device_id, name, revoked, created_at, last_seen FROM devices "
-        "ORDER BY created_at DESC"
+        "WHERE owner_username=? ORDER BY created_at DESC",
+        (owner_username,),
     )
     out = []
     for r in rows:
@@ -53,6 +98,43 @@ def list_devices() -> list[dict]:
             "last_seen": r.get("last_seen") or "",
         })
     return out
+
+
+def set_device_scopes(device_id: str, owner_username: str, scopes: dict) -> bool:
+    if not isinstance(scopes, dict) or set(scopes) != ALLOWED_SCOPE_NAMES:
+        return False
+    if any(type(value) is not bool for value in scopes.values()):
+        return False
+    return db_write(
+        "UPDATE devices SET scopes=? WHERE device_id=? AND owner_username=? AND revoked=0",
+        (json.dumps(scopes, sort_keys=True), device_id, owner_username),
+    )
+
+
+def device_scope_for_action(action: str, args: dict | None = None) -> str | None:
+    scope_name = {
+        "open_app": "allow_open_app",
+        "open_url": "allow_open_app",
+        "take_snapshot": "allow_camera",
+        "take_screenshot": "allow_camera",
+        "describe_screen": "allow_camera",
+        "notify": "allow_notify",
+        "lock_screen": "allow_lock",
+    }.get(action)
+    if action == "system_action" and (args or {}).get("action") == "lock":
+        scope_name = "allow_lock"
+    return scope_name
+
+
+def device_scope_allows(device: dict, action: str, args: dict | None = None) -> bool:
+    scope_name = device_scope_for_action(action, args)
+    if not scope_name:
+        return False
+    try:
+        scopes = json.loads(device.get("scopes") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return False
+    return scopes.get(scope_name) is True
 
 
 def get_device(device_id: str) -> dict | None:

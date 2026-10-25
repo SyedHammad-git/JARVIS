@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import secrets
+import time
 import uuid
 from threading import Lock
 
@@ -10,7 +12,14 @@ from flask_socketio import Namespace, disconnect
 from socketio.exceptions import ConnectionRefusedError, TimeoutError as SocketIOTimeout
 
 from app.auth import add_alert
-from app.devices.pairing import get_device, get_device_status_cached, touch_last_seen, validate_device_token
+from app.devices.pairing import (
+    device_scope_allows,
+    device_scope_for_action,
+    get_device,
+    get_device_status_cached,
+    touch_last_seen,
+    validate_device_token,
+)
 from app.extensions import socketio
 from app.notifications import send_discord_alert
 
@@ -47,19 +56,40 @@ def disconnect_device(device_id: str) -> None:
             log.info("disconnect_device: %s", exc)
 
 
-def call_device(device_id: str, action: str, args: dict | None = None, timeout: int = CALL_TIMEOUT) -> dict:
+def call_device(
+    device_id: str,
+    action: str,
+    args: dict | None = None,
+    timeout: int = CALL_TIMEOUT,
+    *,
+    owner_username: str | None = None,
+    confirmed: bool = False,
+    confirmation_nonce: str | None = None,
+) -> dict:
     """Send command to the paired device; wait for ack. Never raises to the agent."""
-    device = get_device_status_cached(device_id)
+    device = get_device(device_id)
     if not device:
         return {"ok": False, "error": "device_offline"}
+    if not owner_username or device.get("owner_username") != owner_username:
+        return {"ok": False, "error": "device_not_owned"}
     if int(device.get("revoked") or 0):
         return {"ok": False, "error": "device_revoked"}
+    scope = device_scope_for_action(action, args)
+    if not scope or not device_scope_allows(device, action, args):
+        return {"ok": False, "error": "device_scope_denied"}
+    high_risk = action in {"kill_process", "type_text", "system_action"}
+    if high_risk and (not confirmed or not confirmation_nonce):
+        return {"ok": False, "error": "needs_confirmation"}
     sid = sid_for(device_id)
     if not sid:
         return {"ok": False, "error": "device_offline"}
     payload = {
         "id": str(uuid.uuid4()),
+        "nonce": confirmation_nonce or secrets.token_urlsafe(24),
+        "timestamp": int(time.time() * 1000),
         "action": action,
+        "scope": scope,
+        "risk": "high" if high_risk else "low",
         "args": args or {},
     }
     try:

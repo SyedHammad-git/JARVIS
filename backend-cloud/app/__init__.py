@@ -33,10 +33,22 @@ def create_app(
     """Create and configure the Flask app, starting workers only for runtime use."""
     load_environment()
 
-    if not testing:
+    from app.security import (
+        configure_proxy,
+        configure_session,
+        configured_cors_origins,
+        install_api_security,
+        validate_production_config,
+    )
+
+    validate_production_config()
+    production = os.environ.get("JARVIS_ENV", "development").lower() == "production"
+    if not testing and not production:
         from app.bind import resolve_bind_host
 
         bind_host = resolve_bind_host(bind_host)
+    elif not testing:
+        bind_host = f"gunicorn-managed:0.0.0.0:{os.environ.get('PORT', 'unset')}"
 
     from app.db import init_db
     from app.extensions import socketio
@@ -47,6 +59,8 @@ def create_app(
         __name__,
         static_folder=str(Path(__file__).resolve().parent / "static"),
     )
+    configure_proxy(app)
+    configure_session(app)
 
     app.config.update(JSON_SORT_KEYS=False, MAX_CONTENT_LENGTH=32 * 1024 * 1024, TESTING=testing)
     if bind_host is not None:
@@ -61,18 +75,26 @@ def create_app(
 
     from app.devices.gateway import register_namespace
     from app.devices.http import devices_bp
+    from app.routes.auth_routes import auth
     from app.routes.ai_routes import ai
     from app.routes.core_routes import core
+    from app.routes.key_routes import keys_bp
     from app.routes.data_routes import data
     from app.routes.iot_routes import iot
     from app.routes.system_routes import system
     from flask import jsonify
 
-    for blueprint in (core, ai, system, data, iot, devices_bp):
+    for blueprint in (auth, core, ai, system, data, iot, devices_bp, keys_bp):
         app.register_blueprint(blueprint)
 
     socketio.init_app(app)
     register_namespace(socketio)
+    install_api_security(app)
+
+    from flask_cors import CORS
+
+    cors_origins = configured_cors_origins()
+    CORS(app, origins=cors_origins, supports_credentials=True)
 
     @app.errorhandler(404)
     def not_found(_error):
@@ -93,17 +115,20 @@ def create_app(
         from app import monitor, neural
         from app.vision.snapshots import cleanup_snapshots
 
+        auth_enabled = bool(app.config.get("AUTH_ENABLED"))
         log.warning(
             "STARTUP SELF-CHECK provider_key_presence groq=%s gemini=%s openrouter=%s weather=%s; "
-            "db_backend=%s bind_host=%s auth_enabled=no",
-            bool(backend_config.GROQ_KEY),
-            bool(backend_config.GEMINI_KEY),
-            bool(backend_config.OPENROUTER_KEY),
-            bool(backend_config.WEATHER_KEY),
+            "db_backend=%s bind_host=%s auth_enabled=%s",
+            bool(backend_config.get_api_key("GROQ_KEY")),
+            bool(backend_config.get_api_key("GEMINI_KEY")),
+            bool(backend_config.get_api_key("OPENROUTER_KEY")),
+            bool(backend_config.get_api_key("WEATHER_KEY")),
             DB_BACKEND,
             bind_host,
+            "yes" if auth_enabled else "no",
         )
-        log.warning("SECURITY WARNING: API authentication is disabled (auth_enabled=no)")
+        if not auth_enabled:
+            log.warning("SECURITY WARNING: API authentication is currently disabled")
         cleanup_snapshots()
         monitor.start_background_threads()
         neural.start_background_threads()

@@ -214,8 +214,13 @@ def sysinfo():
 
 
 @core.route("/api/health")
-@api_errors
 def health():
+    return jsonify({"status": "ok", "version": "v17.M"})
+
+
+@core.route("/api/health/details")
+@api_errors
+def health_details():
     """Deep health-check endpoint (L7).
     TASK-014: now genuinely verifies DB connectivity, all 3 AI providers
     (not just Groq), and background-thread liveness — not just that the

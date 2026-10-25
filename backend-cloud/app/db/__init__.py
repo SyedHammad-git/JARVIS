@@ -161,14 +161,50 @@ CREATE TABLE IF NOT EXISTS monitor_log (
     timestamp    TEXT    NOT NULL
 );
 
+-- Human accounts; password hashes and TOTP seeds only
+CREATE TABLE IF NOT EXISTS users (
+    username      TEXT PRIMARY KEY,
+    password_hash TEXT NOT NULL,
+    totp_secret   TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    disabled      INTEGER NOT NULL DEFAULT 0
+);
+
 -- Paired Electron / fake devices (token stored as sha256 hex only)
 CREATE TABLE IF NOT EXISTS devices (
     device_id  TEXT PRIMARY KEY,
     name       TEXT    NOT NULL DEFAULT 'PC',
     token_hash TEXT    NOT NULL,
+    owner_username TEXT NOT NULL DEFAULT '',
+    scopes     TEXT    NOT NULL DEFAULT '{}',
     revoked    INTEGER NOT NULL DEFAULT 0,
     created_at TEXT    NOT NULL,
     last_seen  TEXT    DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS user_api_keys (
+    owner_username TEXT NOT NULL,
+    provider       TEXT NOT NULL,
+    encrypted_key  TEXT NOT NULL,
+    updated_at     TEXT NOT NULL,
+    PRIMARY KEY (owner_username, provider)
+);
+
+CREATE TABLE IF NOT EXISTS pairing_codes (
+    code_hash      TEXT PRIMARY KEY,
+    owner_username TEXT NOT NULL,
+    name           TEXT NOT NULL DEFAULT 'PC',
+    expires_at     REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS pending_confirmations (
+    owner_username TEXT NOT NULL,
+    session_id     TEXT NOT NULL,
+    nonce_hash     TEXT NOT NULL,
+    message        TEXT NOT NULL,
+    tool_signature TEXT NOT NULL,
+    expires_at     REAL NOT NULL,
+    PRIMARY KEY (owner_username, session_id)
 );
 """
 
@@ -257,6 +293,8 @@ _REQUIRED_COLUMNS: dict[str, list[tuple]] = {
                      ("last_used",  "TEXT",    "''")],
     "heartbeat_log":[("created_at", "TEXT",    "''")],
     "alarms":       [("created_at", "TEXT",    "''")],
+    "devices":      [("owner_username", "TEXT", "''"),
+                     ("scopes", "TEXT", "'{}'")],
 }
 
 # legacy column names that may hold timestamp data in old DBs
@@ -437,6 +475,21 @@ def _sqlite_write_many(statements: list[tuple[str, tuple]]) -> bool:
             conn.close()
 
 
+def _sqlite_write_returning(sql: str, params: tuple = ()) -> list[dict]:
+    with db_lock:
+        conn = _sqlite_connect()
+        try:
+            rows = conn.execute(sql, params).fetchall()
+            conn.commit()
+            return [dict(row) for row in rows]
+        except Exception as exc:
+            log.error("sqlite_write_returning failed (%s)", type(exc).__name__)
+            conn.rollback()
+            return []
+        finally:
+            conn.close()
+
+
 def _sqlite_read(sql: str, params: tuple = ()) -> list[dict]:
     conn = _sqlite_connect()
     try:
@@ -526,6 +579,40 @@ def _postgres_init() -> None:
         try:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")
+                cur.execute(
+                    "CREATE TABLE IF NOT EXISTS users ("
+                    "username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, "
+                    "totp_secret TEXT NOT NULL, created_at TEXT NOT NULL, "
+                    "disabled INTEGER NOT NULL DEFAULT 0)"
+                )
+                cur.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS owner_username TEXT NOT NULL DEFAULT ''")
+                cur.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS scopes TEXT NOT NULL DEFAULT '{}'")
+                cur.execute(
+                    "CREATE TABLE IF NOT EXISTS user_api_keys ("
+                    "owner_username TEXT NOT NULL, provider TEXT NOT NULL, "
+                    "encrypted_key TEXT NOT NULL, updated_at TEXT NOT NULL, "
+                    "PRIMARY KEY (owner_username, provider))"
+                )
+                cur.execute(
+                    "CREATE TABLE IF NOT EXISTS pairing_codes ("
+                    "code_hash TEXT PRIMARY KEY, owner_username TEXT NOT NULL, "
+                    "name TEXT NOT NULL DEFAULT 'PC', expires_at DOUBLE PRECISION NOT NULL)"
+                )
+                cur.execute(
+                    "CREATE TABLE IF NOT EXISTS pending_confirmations ("
+                    "owner_username TEXT NOT NULL, session_id TEXT NOT NULL, "
+                    "nonce_hash TEXT NOT NULL, message TEXT NOT NULL, "
+                    "tool_signature TEXT NOT NULL, expires_at DOUBLE PRECISION NOT NULL, "
+                    "PRIMARY KEY (owner_username, session_id))"
+                )
+                cur.execute(
+                    "CREATE TABLE IF NOT EXISTS users ("
+                    "username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, "
+                    "totp_secret TEXT NOT NULL, created_at TEXT NOT NULL, "
+                    "disabled INTEGER NOT NULL DEFAULT 0)"
+                )
+                cur.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS owner_username TEXT NOT NULL DEFAULT ''")
+                cur.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS scopes TEXT NOT NULL DEFAULT '{}'")
             conn.commit()
         except Exception as exc:
             if _is_pg_connection_error(exc):
@@ -641,6 +728,41 @@ def _postgres_write_many(statements: list[tuple[str, tuple]]) -> bool:
     return _retry_pg_connection(write_once)
 
 
+def _postgres_write_returning(sql: str, params: tuple = ()) -> list[dict]:
+    pg_sql = _pg_placeholder(sql)
+
+    def write_once():
+        import psycopg2.extras
+
+        pool = _get_pg_pool()
+        conn = None
+        broken = False
+        try:
+            with db_lock:
+                conn = pool.getconn()
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                    cursor.execute(pg_sql, params if params else None)
+                    rows = [dict(row) for row in cursor.fetchall()]
+                conn.commit()
+                return rows
+        except Exception as exc:
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            if _is_pg_connection_error(exc):
+                broken = True
+                raise
+            log.error("pg_write_returning failed (%s)", type(exc).__name__)
+            return []
+        finally:
+            if conn:
+                pool.putconn(conn, close=broken)
+
+    return _retry_pg_connection(write_once)
+
+
 def _postgres_read(sql: str, params: tuple = ()) -> list[dict]:
     pg_sql = _pg_placeholder(sql)
 
@@ -710,6 +832,12 @@ def db_write_many(statements: list[tuple[str, tuple]]) -> bool:
     if DB_BACKEND == "sqlite":    return _sqlite_write_many(statements)
     if DB_BACKEND == "postgres":  return _postgres_write_many(statements)
     raise NotImplementedError(f"db_write_many: unknown backend {DB_BACKEND}")
+
+
+def db_write_returning(sql: str, params: tuple = ()) -> list[dict]:
+    if DB_BACKEND == "sqlite":    return _sqlite_write_returning(sql, params)
+    if DB_BACKEND == "postgres":  return _postgres_write_returning(sql, params)
+    raise NotImplementedError(f"db_write_returning: unknown backend {DB_BACKEND}")
 
 
 def db_read(sql: str, params: tuple = ()) -> list[dict]:

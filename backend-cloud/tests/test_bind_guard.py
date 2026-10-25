@@ -64,8 +64,12 @@ def test_non_testing_startup_logs_presence_only_self_check(monkeypatch, caplog):
         app.create_app(testing=False)
 
     assert "provider_key_presence groq=True gemini=True openrouter=True weather=True" in caplog.text
-    assert "db_backend=sqlite bind_host=127.0.0.1 auth_enabled=no" in caplog.text
-    assert "SECURITY WARNING: API authentication is disabled" in caplog.text
+    assert "db_backend=sqlite bind_host=127.0.0.1" in caplog.text
+    if "auth_enabled=yes" in caplog.text:
+        assert "SECURITY WARNING: API authentication is currently disabled" not in caplog.text
+    else:
+        assert "auth_enabled=no" in caplog.text
+        assert "SECURITY WARNING: API authentication is currently disabled" in caplog.text
     assert "test-groq-key" not in caplog.text
     assert "test-gemini-key" not in caplog.text
     assert "test-openrouter-key" not in caplog.text

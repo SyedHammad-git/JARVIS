@@ -31,7 +31,7 @@ def test_health_reports_neon_latency_vector_rows_and_no_connection_values(monkey
     monkeypatch.setattr("psutil.cpu_percent", lambda interval=0.1: 1)
     _live_background_threads(monkeypatch)
 
-    response = _health_client().get("/api/health")
+    response = _health_client().get("/api/health/details")
     payload = response.get_json()
 
     assert response.status_code == 200
@@ -51,7 +51,7 @@ def test_health_reports_sqlite_fallback_without_neon_probe(monkeypatch):
     monkeypatch.setattr("psutil.cpu_percent", lambda interval=0.1: 1)
     _live_background_threads(monkeypatch)
 
-    payload = _health_client().get("/api/health").get_json()
+    payload = _health_client().get("/api/health/details").get_json()
 
     assert payload["db_backend"] == "sqlite"
     assert payload["neon_select_1_latency_ms"] is None
