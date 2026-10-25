@@ -1,5 +1,6 @@
 """Provider adapter: Groq, OpenRouter, and Gemini normalize to one shape."""
 import json
+import sys
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -171,6 +172,28 @@ class ChatFailoverTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertIn("gemini-3.8-flash:generateContent", request.call_args.args[0])
         self.assertIn(f"key={fake_key}", request.call_args.args[0])
+
+    def test_route_and_engine_share_one_config_module_identity(self):
+        import app.routes.ai_routes as ai_routes
+
+        self.assertIs(engine.app_config, app_config)
+        self.assertIs(sys.modules["app.config"], app_config)
+        self.assertEqual(ai_routes.run_agent.__module__, "app.ai.agent")
+
+    def test_provider_timeout_is_reported_without_raw_exception_text(self):
+        fake_key = "fake-groq-key-for-timeout-test"
+        request = Mock(side_effect=TimeoutError("timeout https://provider.test/?key=hidden"))
+        with patch.object(app_config, "GROQ_KEY", fake_key), \
+             patch.object(engine, "REQUESTS_OK", True), \
+             patch.object(engine, "_req", SimpleNamespace(post=request)), \
+             patch.object(engine.time, "sleep", return_value=None):
+            with self.assertLogs("jarvis.ai", level="WARNING") as captured:
+                result = call_groq([{"role": "user", "content": "test"}])
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("exception_class=TimeoutError" in line and "http_status=none" in line
+                            for line in captured.output))
+        self.assertNotIn("hidden", "\n".join(captured.output))
 
     def test_provider_diagnostics_redact_key_and_url_query(self):
         fake_key = "fake-provider-key-should-never-be-logged"

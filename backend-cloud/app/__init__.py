@@ -21,9 +21,18 @@ def load_environment() -> None:
     load_dotenv(backend_dir / ".env", override=False)
 
 
-def create_app(testing: bool = False, config_object: dict[str, Any] | None = None) -> Flask:
+def create_app(
+    testing: bool = False,
+    config_object: dict[str, Any] | None = None,
+    bind_host: str | None = None,
+) -> Flask:
     """Create and configure the Flask app, starting workers only for runtime use."""
     load_environment()
+
+    if not testing:
+        from app.bind import resolve_bind_host
+
+        bind_host = resolve_bind_host(bind_host)
 
     from app.db import init_db
     from app.extensions import socketio
@@ -36,6 +45,8 @@ def create_app(testing: bool = False, config_object: dict[str, Any] | None = Non
     )
 
     app.config.update(JSON_SORT_KEYS=False, MAX_CONTENT_LENGTH=32 * 1024 * 1024, TESTING=testing)
+    if bind_host is not None:
+        app.config["JARVIS_HOST"] = bind_host
 
     if config_object:
         app.config.update(config_object)
@@ -73,9 +84,22 @@ def create_app(testing: bool = False, config_object: dict[str, Any] | None = Non
         return jsonify({"error": "Internal server error", "code": 500}), 500
 
     if not app.config["TESTING"]:
+        from app import config as backend_config
+        from app.db import DB_BACKEND
         from app import monitor, neural
         from app.vision.snapshots import cleanup_snapshots
 
+        log.warning(
+            "STARTUP SELF-CHECK provider_key_presence groq=%s gemini=%s openrouter=%s weather=%s; "
+            "db_backend=%s bind_host=%s auth_enabled=no",
+            bool(backend_config.GROQ_KEY),
+            bool(backend_config.GEMINI_KEY),
+            bool(backend_config.OPENROUTER_KEY),
+            bool(backend_config.WEATHER_KEY),
+            DB_BACKEND,
+            bind_host,
+        )
+        log.warning("SECURITY WARNING: API authentication is disabled (auth_enabled=no)")
         cleanup_snapshots()
         monitor.start_background_threads()
         neural.start_background_threads()

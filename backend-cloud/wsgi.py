@@ -42,10 +42,8 @@ from flask import jsonify
 
 from app import create_app, load_environment
 from app.extensions import socketio
-from app.bind import resolve_bind_host
 
 load_environment()
-_bind_host = resolve_bind_host()
 
 app = create_app()
 
@@ -156,7 +154,7 @@ print()
 # plus a message queue such as Redis):
 #   gunicorn --worker-class gthread --threads 100 -w 1 server:app
 if __name__ == "__main__":
-    host  = _bind_host
+    host  = app.config["JARVIS_HOST"]
     port  = int(os.environ.get("JARVIS_PORT", 5000))
     debug = os.environ.get("JARVIS_DEBUG", "false").lower() == "true"
 

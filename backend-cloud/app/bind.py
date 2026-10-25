@@ -30,7 +30,8 @@ def resolve_bind_host(host: str | None = None, allow_public: str | None = None) 
     public_allowed = allow_public if allow_public is not None else os.environ.get("ALLOW_PUBLIC_BIND", "")
     if public_allowed != "1":
         raise RuntimeError(
-            "Refusing non-loopback JARVIS_HOST; set ALLOW_PUBLIC_BIND=1 only on a trusted network"
+            "Refusing non-loopback bind. Set JARVIS_HOST=127.0.0.1 in backend-cloud/.env. "
+            "To explicitly allow public access, set ALLOW_PUBLIC_BIND=1 on a trusted network."
         )
 
     log.warning(
