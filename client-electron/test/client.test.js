@@ -1,0 +1,169 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { APP_ALLOWLIST, createCommandHandler, createExecutor } = require('../src/executor');
+const { createApproval } = require('../src/approval');
+const { createStore, validateConfig } = require('../src/store');
+const { createAudit } = require('../src/audit');
+const { createRevocationMonitor } = require('../src/revocation');
+
+test('executor launches only allowlisted apps with shell disabled', async () => {
+  const calls = [];
+  const executor = createExecutor({
+    shell: { openExternal: async () => {} },
+    Notification: null,
+    spawn: (exe, args, options) => {
+      calls.push({ exe, args, options });
+      const child = new EventEmitter();
+      child.unref = () => {};
+      process.nextTick(() => child.emit('spawn'));
+      return child;
+    },
+  });
+  assert.deepEqual(Object.keys(APP_ALLOWLIST).sort(), ['calculator', 'explorer', 'notepad', 'paint']);
+  assert.deepEqual(await executor.execute('open_app', { target: 'notepad' }), { ok: true, message: 'Opened notepad' });
+  assert.equal(calls[0].exe, 'notepad.exe');
+  assert.equal(calls[0].options.shell, false);
+  assert.equal(calls[0].options.detached, true);
+  assert.deepEqual(await executor.execute('open_app', { target: 'regedit' }), { ok: false, error: 'app_not_allowed: regedit' });
+  assert.deepEqual(await executor.execute('open_app', { target: 'notepad', args: ['x'] }), { ok: false, error: 'invalid_arguments' });
+  assert.deepEqual(await executor.execute('unknown', {}), { ok: false, error: 'unknown_action' });
+});
+
+test('executor validates URL, notification strings, and argument shapes', async () => {
+  const opened = [];
+  const notices = [];
+  class FakeNotification {
+    static isSupported() { return true; }
+    constructor(options) { notices.push(options); }
+    show() {}
+  }
+  const executor = createExecutor({
+    shell: { openExternal: async (url) => opened.push(url) },
+    Notification: FakeNotification,
+  });
+  assert.equal((await executor.execute('open_url', { url: 'javascript:alert(1)' })).error, 'invalid_url');
+  assert.equal((await executor.execute('open_url', { url: 'https://user:pass@example.com' })).error, 'invalid_url');
+  assert.equal((await executor.execute('open_url', { url: 'https://example.com' })).ok, true);
+  assert.equal(opened[0], 'https://example.com/');
+  assert.equal((await executor.execute('notify', { title: 'x'.repeat(81), body: 'ok' })).error, 'invalid_arguments');
+  assert.equal((await executor.execute('notify', { title: 'Ready', body: 'Done' })).ok, true);
+  assert.deepEqual(notices[0], { title: 'Ready', body: 'Done' });
+  assert.equal((await executor.execute('system_stats', [])).error, 'invalid_arguments');
+});
+
+test('command handler rejects malformed, stale, replayed, and kill-switch commands', async () => {
+  let instant = 1_800_000_000_000;
+  let enabled = true;
+  const executed = [];
+  const audited = [];
+  const guard = createCommandHandler({
+    execute: async (action, args) => { executed.push({ action, args }); return { ok: true }; },
+    isRemoteEnabled: () => enabled,
+    audit: { write: (entry) => audited.push(entry) },
+    now: () => instant,
+  });
+  assert.equal((await guard.handle({ id: 4, action: 'open_app', args: {} })).error, 'invalid_command');
+  assert.equal((await guard.handle({ id: 'old', timestamp: instant - 61_000, action: 'open_app' })).error, 'stale_command');
+  enabled = false;
+  assert.equal((await guard.handle({ id: 'disabled', action: 'open_app', args: {} })).error, 'remote_disabled');
+  enabled = true;
+  const fresh = { id: 'fresh', action: 'open_app', args: { target: 'notepad' } };
+  assert.deepEqual(await guard.handle(fresh), { ok: true });
+  assert.equal((await guard.handle(fresh)).error, 'replayed_command');
+  instant += 5 * 60 * 1000;
+  assert.deepEqual(await guard.handle(fresh), { ok: true });
+  assert.equal(executed.length, 2);
+  assert.equal(audited.length, 6);
+});
+
+test('pairing URLs require HTTPS except development loopback', () => {
+  assert.equal(validateConfig({ url: 'https://jarvis.example.com', deviceId: 'd1', token: 'secret' }).url, 'https://jarvis.example.com');
+  assert.equal(validateConfig({ url: 'http://localhost:5000', deviceId: 'd1', token: 'secret' }, true).url, 'http://localhost:5000');
+  assert.throws(() => validateConfig({ url: 'http://example.com', deviceId: 'd1', token: 'secret' }, true), /insecure_url/);
+  assert.throws(() => validateConfig({ url: 'https://u:p@example.com', deviceId: 'd1', token: 'secret' }), /insecure_url/);
+});
+
+test('credential store encrypts persisted data and audit omits token fields', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-client-'));
+  const previousDevMode = process.env.JARVIS_DEV;
+  process.env.JARVIS_DEV = '1';
+  const safeStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString: (value) => Buffer.from(Buffer.from(value, 'utf8').toString('base64'), 'utf8'),
+    decryptString: (value) => Buffer.from(value.toString('utf8'), 'base64').toString('utf8'),
+  };
+  try {
+    const store = createStore({ app: { getPath: () => directory }, safeStorage });
+    const credentials = { url: 'http://localhost:5000', deviceId: 'device-1', token: 'never-store-plain' };
+    store.save(credentials);
+    const persisted = fs.readFileSync(store.filePath, 'utf8');
+    assert.equal(persisted.includes(credentials.token), false);
+    assert.equal(persisted.includes('"token"'), false);
+    assert.deepEqual(store.load(), credentials);
+
+    const audit = createAudit({ app: { getPath: () => directory } });
+    audit.write({ action: 'open_app', args: { target: 'notepad', token: credentials.token }, result: { ok: true } });
+    const line = fs.readFileSync(audit.filePath, 'utf8');
+    assert.equal(line.includes(credentials.token), false);
+    assert.equal(line.includes('"token"'), false);
+  } finally {
+    if (previousDevMode === undefined) delete process.env.JARVIS_DEV;
+    else process.env.JARVIS_DEV = previousDevMode;
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('revocation monitor disconnects when backend reports device offline', async () => {
+  let scheduled;
+  let scheduledCount = 0;
+  let revoked = 0;
+  let requestUrl;
+  const socket = { connected: true };
+  const monitor = createRevocationMonitor({
+    fetchImpl: async (url) => {
+      requestUrl = url.toString();
+      return { ok: true, json: async () => ({ execution_mode: 'remote', online: false }) };
+    },
+    setTimer: (callback, delay) => {
+      assert.equal(delay, 15_000);
+      scheduled = callback;
+      scheduledCount += 1;
+      return scheduledCount;
+    },
+    clearTimer: () => {},
+  });
+  monitor.start({ url: 'http://localhost:5000', deviceId: 'device-1' }, socket, () => {
+    revoked += 1;
+    socket.connected = false;
+  });
+  await scheduled();
+  assert.match(requestUrl, /\/api\/device\/status\?device_id=device-1$/);
+  assert.equal(revoked, 1);
+  assert.equal(socket.connected, false);
+  assert.equal(scheduledCount, 1);
+});
+
+test('approval only prompts for high-risk actions and times out as deny', async () => {
+  let timerCallback;
+  const approval = createApproval({
+    dialog: { showMessageBox: () => new Promise(() => {}) },
+    timeoutMs: 30_000,
+    setTimer: (callback, duration) => { assert.equal(duration, 30_000); timerCallback = callback; return 1; },
+    clearTimer: () => {},
+  });
+  assert.equal(await approval.request('open_app'), false);
+  const pending = approval.request('shutdown', { summary: 'Power off' });
+  timerCallback();
+  assert.equal(await pending, false);
+});
+
+test('approval accepts only the explicit Approve response', async () => {
+  const approval = createApproval({ dialog: { showMessageBox: async () => ({ response: 0 }) } });
+  assert.equal(await approval.request('restart'), true);
+});

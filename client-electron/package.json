@@ -1,0 +1,39 @@
+{
+  "name": "jarvis-device-client",
+  "version": "18.0.0",
+  "description": "J.A.R.V.I.S Windows device client",
+  "private": true,
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "set JARVIS_DEV=1&& electron .",
+    "test": "node --test",
+    "dist": "electron-builder --win nsis"
+  },
+  "dependencies": {
+    "socket.io-client": "4.8.4"
+  },
+  "devDependencies": {
+    "electron": "45.0.0",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "com.jarvis.deviceclient",
+    "productName": "JARVIS Device Client",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "src/ui/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

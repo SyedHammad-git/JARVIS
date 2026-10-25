@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>J.A.R.V.I.S device status</title>
+  <link rel="stylesheet" href="app.css">
+  <script src="status.js" defer></script>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">DEVICE CLIENT</p>
+    <h1>J.A.R.V.I.S</h1>
+    <dl>
+      <div><dt>Connection</dt><dd id="connection">Loading</dd></div>
+      <div><dt>Last command</dt><dd id="last-command">None</dd></div>
+    </dl>
+    <button id="pair" type="button">Pair or update credentials</button>
+  </main>
+</body>
+</html>
