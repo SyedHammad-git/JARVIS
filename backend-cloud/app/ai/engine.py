@@ -145,7 +145,7 @@ def build_jarvis_context() -> str:
 
 # ── AI Provider Callers ───────────────────────────────────────────
 def call_groq(messages: list, tools=None, max_tokens=1024, temperature=0.1) -> dict:
-    api_key = app_config.GROQ_KEY
+    api_key = app_config.get_api_key("GROQ_KEY")
     if not REQUESTS_OK or not api_key:
         _log_provider_failure("groq", exception_class="ConfigurationError", detail="provider unavailable or key not configured")
         return {"ok": False, "error": "Groq not configured"}
@@ -197,13 +197,13 @@ def groq_available() -> bool:
     Groq again to give it a chance to reset the flag. The cooldown expiring
     is what grants that one retry chance; if it fails, _bump_groq_fail_streak
     just re-opens the cooldown for another GROQ_COOLDOWN_SECS."""
-    if not app_config.GROQ_KEY:
+    if not app_config.get_api_key("GROQ_KEY"):
         return False
     with ai_router_lock:
         return time.time() >= ai_router_state.get("groq_cooldown_until", 0)
 
 def call_gemini(prompt: str, image_base64: str = None) -> dict:
-    api_key = app_config.GEMINI_KEY
+    api_key = app_config.get_api_key("GEMINI_KEY")
     if not REQUESTS_OK or not api_key:
         _log_provider_failure("gemini", exception_class="ConfigurationError", detail="provider unavailable or key not configured")
         return {"ok": False, "error": "Gemini not configured"}
@@ -231,7 +231,7 @@ def call_gemini(prompt: str, image_base64: str = None) -> dict:
         return {"ok": False, "error": str(e)}
 
 def call_openrouter(messages: list, tools=None, max_tokens=1024) -> dict:
-    api_key = app_config.OPENROUTER_KEY
+    api_key = app_config.get_api_key("OPENROUTER_KEY")
     if not REQUESTS_OK or not api_key:
         _log_provider_failure("openrouter", exception_class="ConfigurationError", detail="provider unavailable or key not configured")
         return {"ok": False, "error": "OpenRouter not configured"}
@@ -398,7 +398,7 @@ def openai_history_to_gemini(messages: list, tools=None):
 
 
 def call_gemini_chat(contents, tools=None, system=None, max_tokens=1024) -> dict:
-    api_key = app_config.GEMINI_KEY
+    api_key = app_config.get_api_key("GEMINI_KEY")
     if not REQUESTS_OK or not api_key:
         _log_provider_failure("gemini", exception_class="ConfigurationError", detail="provider unavailable or key not configured")
         return {"ok": False, "error": "Gemini not configured", "text": "",
@@ -463,7 +463,7 @@ def chat(messages: list, tools=None, max_tokens=1024, temperature=0.1) -> dict:
             ai_router_state["fail_count"] += 1
         log.warning("chat(): Groq failed; trying OpenRouter")
 
-    if app_config.OPENROUTER_KEY:
+    if app_config.get_api_key("OPENROUTER_KEY"):
         result = call_openrouter(messages, tools=tools, max_tokens=max_tokens)
         if result.get("ok"):
             with ai_router_lock:
@@ -475,7 +475,7 @@ def chat(messages: list, tools=None, max_tokens=1024, temperature=0.1) -> dict:
             return norm
         log.warning("chat(): OpenRouter failed; trying Gemini")
 
-    if app_config.GEMINI_KEY:
+    if app_config.get_api_key("GEMINI_KEY"):
         contents, g_tools, sys_inst = openai_history_to_gemini(messages, tools)
         result = call_gemini_chat(contents, tools=g_tools, system=sys_inst, max_tokens=max_tokens)
         if result.get("ok"):
@@ -513,7 +513,7 @@ def _evict_cache():
 
 def groq_as_manager(trigger: str, worker_output: str,
                     max_tokens: int = 100, context: str = "") -> str:
-    if not app_config.GROQ_KEY or not REQUESTS_OK:
+    if not app_config.get_api_key("GROQ_KEY") or not REQUESTS_OK:
         return worker_output
 
     cache_key = f"{trigger}:{worker_output[:60]}"
@@ -584,7 +584,7 @@ def _route_inner(messages: list, tools=None, task_type="chat") -> tuple:
         with ai_router_lock: ai_router_state["fail_count"] += 1
         log.warning("Groq failed: %s — trying OpenRouter", result.get("error"))
 
-    if app_config.OPENROUTER_KEY:
+    if app_config.get_api_key("OPENROUTER_KEY"):
         result = call_openrouter(messages)
         if result["ok"]:
             with ai_router_lock:
@@ -598,7 +598,7 @@ def _route_inner(messages: list, tools=None, task_type="chat") -> tuple:
                 return summary, "groq/manager←openrouter", steps
             return raw, "openrouter/claude-haiku", steps
 
-    if app_config.GEMINI_KEY:
+    if app_config.get_api_key("GEMINI_KEY"):
         prompt = "\n".join(m.get("content", "") for m in messages[-3:]
                            if isinstance(m.get("content"), str))
         result = call_gemini(prompt)

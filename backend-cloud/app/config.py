@@ -55,6 +55,32 @@ GEMINI_KEY     = os.environ.get("GEMINI_KEY", "")
 OPENROUTER_KEY = os.environ.get("OPENROUTER_KEY", "")
 WEATHER_KEY    = os.environ.get("WEATHER_KEY", "")
 
+_API_KEY_NAMES = {"GROQ_KEY", "GEMINI_KEY", "OPENROUTER_KEY", "WEATHER_KEY"}
+_API_KEY_ENV_SNAPSHOT = {
+    name: os.environ.get(name) for name in _API_KEY_NAMES
+}
+
+
+def get_api_key(name: str) -> str:
+    if name not in _API_KEY_NAMES:
+        raise ValueError(f"Unsupported API key name: {name}")
+    value = os.environ.get(name)
+    if value != _API_KEY_ENV_SNAPSHOT[name]:
+        return value or ""
+    return globals()[name]
+
+
+def refresh_api_keys() -> None:
+    global GROQ_KEY, GEMINI_KEY, OPENROUTER_KEY, WEATHER_KEY, _API_KEY_ENV_SNAPSHOT
+    GROQ_KEY = os.environ.get("GROQ_KEY", "")
+    GEMINI_KEY = os.environ.get("GEMINI_KEY", "")
+    OPENROUTER_KEY = os.environ.get("OPENROUTER_KEY", "")
+    WEATHER_KEY = os.environ.get("WEATHER_KEY", "")
+    _API_KEY_ENV_SNAPSHOT = {
+        name: os.environ.get(name) for name in _API_KEY_NAMES
+    }
+
+
 GROQ_URL   = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
@@ -62,7 +88,7 @@ GROQ_MODEL = "llama-3.3-70b-versatile"
 # and empty keys don't produce malformed ?key= URLs
 def get_gemini_url(pro: bool = False, key: str | None = None) -> str:
     if key is None:
-        key = os.environ.get("GEMINI_KEY", GEMINI_KEY)
+        key = get_api_key("GEMINI_KEY")
     model = "gemini-4-argon" if pro else "gemini-3.8-flash"
     return (f"https://generativelanguage.googleapis.com/v1beta/models/"
             f"{model}:generateContent?key={key}")
@@ -75,14 +101,13 @@ GEMINI_URL     = get_gemini_url(pro=False)
 GEMINI_PRO_URL = get_gemini_url(pro=True)
 
 def _check_api_keys():
-    missing = [k for k, v in [("GROQ_KEY", GROQ_KEY),
-                                ("GEMINI_KEY", GEMINI_KEY),
-                                ("OPENROUTER_KEY", OPENROUTER_KEY)] if not v]
+    missing = [name for name in ("GROQ_KEY", "GEMINI_KEY", "OPENROUTER_KEY")
+               if not get_api_key(name)]
     if missing:
         print(f"[CONFIG] ⚠  Missing .env keys: {', '.join(missing)}")
     else:
         print("[CONFIG] ✅ All AI keys loaded")
-    if WEATHER_KEY:
+    if get_api_key("WEATHER_KEY"):
         print("[CONFIG] ✅ WEATHER_KEY active (OpenWeatherMap)")
     else:
         print("[CONFIG] ⚠  WEATHER_KEY missing — wttr.in fallback active")

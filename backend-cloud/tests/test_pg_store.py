@@ -18,7 +18,7 @@ def test_gemini_embedding_uses_768_dimensions_without_logging_secrets(monkeypatc
         status_code=200,
         json=lambda: {"embedding": {"values": values}},
     ))
-    monkeypatch.setattr(pg_store, "GEMINI_KEY", key)
+    monkeypatch.setenv("GEMINI_KEY", key)
     monkeypatch.setattr(pg_store, "REQUESTS_OK", True)
     monkeypatch.setattr(pg_store, "_req", SimpleNamespace(post=request))
 
@@ -30,7 +30,7 @@ def test_gemini_embedding_uses_768_dimensions_without_logging_secrets(monkeypatc
 
 
 def test_embedding_failure_degrades_without_exception(monkeypatch):
-    monkeypatch.setattr(pg_store, "GEMINI_KEY", "present-but-not-logged")
+    monkeypatch.setenv("GEMINI_KEY", "present-but-not-logged")
     monkeypatch.setattr(pg_store, "REQUESTS_OK", True)
     monkeypatch.setattr(pg_store, "_req", SimpleNamespace(post=Mock(side_effect=TimeoutError())))
     assert pg_store.embed_text("query") is None

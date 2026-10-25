@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,9 @@ def load_environment() -> None:
         return
     backend_dir = Path(__file__).resolve().parents[1]
     load_dotenv(backend_dir / ".env", override=False)
+    config_module = sys.modules.get("app.config")
+    if config_module is not None:
+        config_module.refresh_api_keys()
 
 
 def create_app(

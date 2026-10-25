@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import math
 
-from app.config import GEMINI_KEY, REQUESTS_OK, _req
+from app.config import REQUESTS_OK, _req, get_api_key
 from app.db import DB_BACKEND, db_read, db_write
 
 EMBEDDING_DIMENSIONS = 768
@@ -12,11 +12,12 @@ EMBEDDING_MODEL = "gemini-embedding-001"
 
 
 def embed_text(text: str) -> list[float] | None:
-    if not REQUESTS_OK or not GEMINI_KEY or not isinstance(text, str) or not text.strip():
+    gemini_key = get_api_key("GEMINI_KEY")
+    if not REQUESTS_OK or not gemini_key or not isinstance(text, str) or not text.strip():
         return None
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{EMBEDDING_MODEL}:embedContent?key={GEMINI_KEY}"
+        f"{EMBEDDING_MODEL}:embedContent?key={gemini_key}"
     )
     payload = {
         "model": f"models/{EMBEDDING_MODEL}",
