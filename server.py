@@ -85,6 +85,9 @@ except ImportError:
 import database, notifications, auth
 import ai_engine, tools, agent, command
 import memory, smarthome, monitor, neural
+from vision.snapshots import cleanup_snapshots
+
+cleanup_snapshots()
 
 # ── 6. Register blueprints ────────────────────────────────────────
 from routes.core_routes   import core

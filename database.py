@@ -2,8 +2,8 @@
 ╔══════════════════════════════════════════════════════════════════════════╗
 ║  J.A.R.V.I.S v17.M — Database Abstraction Layer                        ║
 ║  FIXED:                                                                  ║
-║    BUG-4  Unified column names: created_at everywhere (SQLite=Supabase) ║
-║    BUG-8  cfg_set PG: updated → updated_at (Supabase config schema)     ║
+║    BUG-4  Unified column names: created_at everywhere                   ║
+║    BUG-8  cfg_set PG: updated → updated_at                              ║
 ║    POOL   PostgreSQL ThreadedConnectionPool (no new conn per query)     ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
@@ -14,8 +14,10 @@ import logging
 import os
 import re
 import sqlite3
+import time
 from pathlib import Path
 from threading import Lock
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,7 +34,7 @@ DB_PATH  : Path = DATA_DIR / "jarvis.db"
 DB_BACKEND: str = os.environ.get("DB_BACKEND", "sqlite").lower().strip()
 
 # ════════════════════════════════════════════════════════════════════
-# SCHEMA — unified column names matching Supabase production schema
+# SCHEMA — shared logical schema; SQLite and Postgres use converted forms
 # All timestamps use created_at / updated_at
 # ════════════════════════════════════════════════════════════════════
 _SCHEMA: str = """
@@ -167,6 +169,44 @@ CREATE TABLE IF NOT EXISTS devices (
     last_seen  TEXT    DEFAULT ''
 );
 """
+
+
+def postgres_schema_from_sqlite(schema: str = _SCHEMA) -> str:
+    converted = re.sub(
+        r"\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b",
+        "BIGSERIAL PRIMARY KEY",
+        schema,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"(?m)^([ \t]*)trigger([ \t]+TEXT\b)", r'\1"trigger"\2', converted, flags=re.IGNORECASE)
+
+
+_POSTGRES_SCHEMA = postgres_schema_from_sqlite()
+_POSTGRES_SNAPSHOT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS snapshots (
+    snapshot_id TEXT PRIMARY KEY,
+    image BYTEA NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS snapshots_expires_at_idx ON snapshots(expires_at);
+"""
+
+
+def _postgres_url(variable: str = "DATABASE_URL") -> str:
+    connection_url = os.environ.get(variable, "").strip()
+    if not connection_url:
+        raise EnvironmentError(f"{variable} is not set")
+    parsed = urlsplit(connection_url)
+    if parsed.scheme not in ("postgres", "postgresql") or not parsed.hostname:
+        raise ValueError(f"{variable} must be a PostgreSQL URL")
+    is_pooler = "-pooler" in parsed.hostname.lower()
+    if variable == "DATABASE_URL" and not is_pooler:
+        raise ValueError("DATABASE_URL must use the Neon pooled endpoint")
+    if variable == "DATABASE_URL_DIRECT" and is_pooler:
+        raise ValueError("DATABASE_URL_DIRECT must use the direct endpoint")
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query["sslmode"] = "require"
+    return urlunsplit(parsed._replace(query=urlencode(query)))
 
 db_lock: Lock = Lock()
 
@@ -392,16 +432,36 @@ def _sqlite_scalar(sql: str, params: tuple = ()):
 # ════════════════════════════════════════════════════════════════════
 _pg_pool      = None
 _pg_pool_lock = Lock()
+PG_CONNECT_RETRIES = 3
+PG_RETRY_DELAYS = (0.25, 0.5)
+
+
+class PostgresUnavailableError(ConnectionError):
+    pass
 
 
 def _pg_dsn() -> str:
-    dsn = os.environ.get("POSTGRES_DSN", "").strip()
-    if not dsn:
-        raise EnvironmentError(
-            "[DB] POSTGRES_DSN not set in .env\n"
-            "  Add: POSTGRES_DSN=postgresql://user:pass@host:5432/dbname"
-        )
-    return dsn
+    return _postgres_url("DATABASE_URL")
+
+
+def _is_pg_connection_error(error: Exception) -> bool:
+    try:
+        import psycopg2
+    except ImportError:
+        return False
+    return isinstance(error, (psycopg2.OperationalError, psycopg2.InterfaceError))
+
+
+def _retry_pg_connection(operation):
+    for attempt in range(PG_CONNECT_RETRIES):
+        try:
+            return operation()
+        except Exception as exc:
+            if not _is_pg_connection_error(exc):
+                raise
+            if attempt == PG_CONNECT_RETRIES - 1:
+                raise PostgresUnavailableError("PostgreSQL connection unavailable") from None
+            time.sleep(PG_RETRY_DELAYS[attempt])
 
 
 def _get_pg_pool():
@@ -425,81 +485,94 @@ def _pg_placeholder(sql: str) -> str:
 
 
 def _postgres_init() -> None:
-    pool = _get_pg_pool()
-    conn = pool.getconn()
+    def check_connection():
+        pool = _get_pg_pool()
+        conn = pool.getconn()
+        broken = False
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+            conn.commit()
+        except Exception as exc:
+            if _is_pg_connection_error(exc):
+                broken = True
+            conn.rollback()
+            raise
+        finally:
+            pool.putconn(conn, close=broken)
+
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT COUNT(*) FROM information_schema.tables "
-                "WHERE table_schema = 'public';"
-            )
-            count = cur.fetchone()[0]
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS devices (
-                    device_id  TEXT PRIMARY KEY,
-                    name       TEXT    NOT NULL DEFAULT 'PC',
-                    token_hash TEXT    NOT NULL,
-                    revoked    INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT    NOT NULL,
-                    last_seen  TEXT    DEFAULT ''
-                )
-                """
-            )
-        conn.commit()
-        print(f"[DB] ✅ PostgreSQL ready — {count} tables found")
-        log.info("PostgreSQL ready — %d tables", count)
+        _retry_pg_connection(check_connection)
+        print("[DB] ✅ PostgreSQL ready")
+        log.info("PostgreSQL ready")
     except Exception as exc:
-        print(f"[DB] ❌ PostgreSQL connection FAILED: {exc}")
-        log.error("PostgreSQL init failed: %s", exc)
+        log.error("PostgreSQL init failed (%s)", type(exc).__name__)
         raise
-    finally:
-        pool.putconn(conn)
 
 
 def _postgres_write(sql: str, params: tuple = ()) -> bool:
     pg_sql = _pg_placeholder(sql)
-    pool   = _get_pg_pool()
-    conn   = None
-    try:
-        with db_lock:
-            conn = pool.getconn()
-            try:
+
+    def write_once():
+        pool = _get_pg_pool()
+        conn = None
+        broken = False
+        try:
+            with db_lock:
+                conn = pool.getconn()
                 with conn.cursor() as cur:
                     cur.execute(pg_sql, params if params else None)
                 conn.commit()
                 return True
-            except Exception as exc:
-                conn.rollback()
-                log.error("pg_write | SQL: %s | err: %s", pg_sql[:120], exc)
-                print(f"[DB PG WRITE ERROR]: {exc}\n  SQL: {pg_sql[:80]}")
-                return False
-            finally:
-                pool.putconn(conn)
-    except Exception as exc:
-        log.error("pg_write pool error: %s", exc)
-        return False
+        except Exception as exc:
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            if _is_pg_connection_error(exc):
+                broken = True
+                raise
+            log.error("pg_write failed (%s) | SQL: %s", type(exc).__name__, pg_sql[:120])
+            return False
+        finally:
+            if conn:
+                pool.putconn(conn, close=broken)
+
+    return _retry_pg_connection(write_once)
 
 
 def _postgres_read(sql: str, params: tuple = ()) -> list[dict]:
     pg_sql = _pg_placeholder(sql)
-    pool   = _get_pg_pool()
-    conn   = None
-    try:
+
+    def read_once():
         import psycopg2.extras
-        conn = pool.getconn()
+        pool = _get_pg_pool()
+        conn = None
+        broken = False
         try:
+            conn = pool.getconn()
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(pg_sql, params if params else None)
-                return [dict(r) for r in cur.fetchall()]
+                result = [dict(row) for row in cur.fetchall()]
+            conn.commit()
+            return result
         except Exception as exc:
-            log.error("pg_read | SQL: %s | err: %s", pg_sql[:120], exc)
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            if _is_pg_connection_error(exc):
+                broken = True
+                raise
+            log.error("pg_read failed (%s) | SQL: %s", type(exc).__name__, pg_sql[:120])
             return []
         finally:
-            pool.putconn(conn)
-    except Exception as exc:
-        log.error("pg_read pool error: %s", exc)
-        return []
+            if conn:
+                pool.putconn(conn, close=broken)
+
+    return _retry_pg_connection(read_once)
 
 
 def _postgres_scalar(sql: str, params: tuple = ()):
@@ -518,9 +591,7 @@ def init_db() -> None:
         try:
             _postgres_init()
         except Exception as exc:
-            print(f"[DB] ⚠ PostgreSQL failed ({exc.__class__.__name__}: {exc})")
-            print("[DB] ↩ Falling back to SQLite — check Supabase project is not paused")
-            print("[DB]   Go to: https://supabase.com/dashboard → your project → Resume")
+            print(f"[DB] ⚠ PostgreSQL unavailable ({type(exc).__name__}); falling back to SQLite")
             DB_BACKEND = "sqlite"
             _sqlite_init()
     else:
@@ -559,7 +630,7 @@ def cfg_set(key: str, value) -> None:
             (key, str(value), now),
         )
     elif DB_BACKEND == "postgres":
-        # ✅ BUG-8 FIX: Supabase config table uses updated_at
+        # PostgreSQL config uses updated_at.
         _postgres_write(
             """
             INSERT INTO config(key, value, updated_at)

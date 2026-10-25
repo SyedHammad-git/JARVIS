@@ -8,8 +8,15 @@ import tools  # noqa: F401
 import agent
 from tools.device_tools import tool_take_snapshot
 import config
+import database
 from vision import snapshots
-from vision.snapshots import MAX_IMAGE_BYTES, SnapshotRateLimiter, cleanup_snapshots, snapshot_ack_to_text
+from vision.snapshots import (
+    MAX_IMAGE_BYTES,
+    SnapshotRateLimiter,
+    cleanup_snapshots,
+    save_snapshot,
+    snapshot_ack_to_text,
+)
 
 
 def test_oversized_snapshot_is_rejected_before_vision_or_storage(tmp_path, caplog):
@@ -128,3 +135,16 @@ def test_snapshot_cleanup_removes_expired_files_only(tmp_path):
     assert not expired.exists()
     assert recent.exists()
     assert unrelated.exists()
+
+
+def test_neon_snapshot_storage_uses_bytea_expiry_and_db_cleanup(monkeypatch):
+    writes = []
+    monkeypatch.setattr(database, "DB_BACKEND", "postgres")
+    monkeypatch.setattr(database, "db_write", lambda sql, params=(): writes.append((sql, params)) or True)
+    image = b"\xff\xd8\xffsnapshot"
+
+    assert save_snapshot("img_test", image, backend="postgres")
+    assert writes[0][0] == "DELETE FROM snapshots WHERE expires_at <= ?"
+    assert writes[1][0] == "INSERT INTO snapshots(snapshot_id,image,expires_at) VALUES(?,?,?)"
+    assert writes[1][1][0:2] == ("img_test", image)
+    assert writes[1][1][2].tzinfo is not None

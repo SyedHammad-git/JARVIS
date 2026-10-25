@@ -73,12 +73,15 @@ JARVIS_v17M/
 # Local dev (default — zero config):
 DB_BACKEND=sqlite
 
-# Production Supabase:
+# Neon production (pooled app URL; direct URL only for migrations):
 DB_BACKEND=postgres
-POSTGRES_DSN=postgresql://postgres:PASSWORD@db.REF.supabase.co:5432/postgres
+DATABASE_URL=postgresql://user:password@ep-example-pooler.region.aws.neon.tech/dbname?sslmode=require
+DATABASE_URL_DIRECT=postgresql://user:password@ep-example.region.aws.neon.tech/dbname?sslmode=require
 ```
 
-Switch = change 1 env variable. Zero code changes.
+The app uses `DATABASE_URL` and requires `sslmode=require`. Run
+`py tools_dev/migrate_neon.py` with `DATABASE_URL_DIRECT` set to the Neon dev
+branch when applying schema changes. SQLite remains the local fallback.
 
 ---
 

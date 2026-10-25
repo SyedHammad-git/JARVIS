@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import base64
 import binascii
+import datetime
 import secrets
 import threading
 import time
 from collections import deque
 from pathlib import Path
 
+import database
 from database import DATA_DIR
 
 MAX_IMAGE_BYTES = 1024 * 1024
@@ -16,7 +18,18 @@ SNAPSHOT_TTL_SECONDS = 24 * 60 * 60
 SNAPSHOT_DIR = DATA_DIR / "snapshots"
 
 
-def cleanup_snapshots(image_dir: Path | None = None, now: float | None = None) -> None:
+def cleanup_snapshots(
+    image_dir: Path | None = None,
+    now: float | None = None,
+    backend: str | None = None,
+) -> None:
+    active_backend = (backend or database.DB_BACKEND).lower()
+    if active_backend == "postgres":
+        current_time = time.time() if now is None else now
+        expires_before = datetime.datetime.fromtimestamp(current_time, datetime.timezone.utc)
+        database.db_write("DELETE FROM snapshots WHERE expires_at <= ?", (expires_before,))
+        return
+
     directory = Path(image_dir or SNAPSHOT_DIR)
     if not directory.is_dir():
         return
@@ -29,7 +42,30 @@ def cleanup_snapshots(image_dir: Path | None = None, now: float | None = None) -
         pass
 
 
-cleanup_snapshots()
+def save_snapshot(
+    snapshot_id: str,
+    image_bytes: bytes,
+    image_dir: Path | None = None,
+    backend: str | None = None,
+) -> bool:
+    active_backend = (backend or database.DB_BACKEND).lower()
+    cleanup_snapshots(image_dir=image_dir, backend=active_backend)
+    if active_backend == "postgres":
+        expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
+            seconds=SNAPSHOT_TTL_SECONDS
+        )
+        return database.db_write(
+            "INSERT INTO snapshots(snapshot_id,image,expires_at) VALUES(?,?,?)",
+            (snapshot_id, image_bytes, expires_at),
+        )
+
+    directory = Path(image_dir or SNAPSHOT_DIR)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"{snapshot_id}.jpg").write_bytes(image_bytes)
+        return True
+    except OSError:
+        return False
 
 
 class SnapshotRateLimiter:
@@ -82,12 +118,7 @@ def snapshot_ack_to_text(ack: dict, question: str, image_dir: Path | None = None
         return "Camera snapshot rejected: invalid JPEG image."
 
     snapshot_id = f"img_{secrets.token_urlsafe(9)}"
-    directory = Path(image_dir or SNAPSHOT_DIR)
-    try:
-        cleanup_snapshots(directory)
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory / f"{snapshot_id}.jpg").write_bytes(image_bytes)
-    except OSError:
+    if not save_snapshot(snapshot_id, image_bytes, image_dir=image_dir):
         return "Camera snapshot could not be stored."
 
     if vision_fn is None:
