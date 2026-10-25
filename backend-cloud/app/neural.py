@@ -39,6 +39,65 @@ neural_state = {
     "event_queue": [],
 }
 
+_ALARM_CACHE_TTL = 30 * 60
+_alarm_cache_lock = Lock()
+_alarm_cache: list[dict] | None = None
+_alarm_cache_synced_at = 0.0
+
+
+def refresh_alarm_cache(force: bool = False, now: float | None = None) -> list[dict]:
+    global _alarm_cache, _alarm_cache_synced_at
+    instant = time.monotonic() if now is None else now
+    with _alarm_cache_lock:
+        if (_alarm_cache is not None and not force
+                and instant - _alarm_cache_synced_at < _ALARM_CACHE_TTL):
+            return [dict(alarm) for alarm in _alarm_cache]
+        _alarm_cache = db_read("SELECT * FROM alarms WHERE active=1 ORDER BY time ASC")
+        _alarm_cache_synced_at = instant
+        return [dict(alarm) for alarm in _alarm_cache]
+
+
+def invalidate_alarm_cache() -> None:
+    global _alarm_cache, _alarm_cache_synced_at
+    with _alarm_cache_lock:
+        _alarm_cache = None
+        _alarm_cache_synced_at = 0.0
+
+
+def _apply_fired_alarm_updates(updates: list[tuple[str, tuple]]) -> None:
+    if not updates or not db_write_many(updates):
+        return
+    fired_ids = {params[0] for _, params in updates}
+    with _alarm_cache_lock:
+        if _alarm_cache is None:
+            return
+        for alarm in _alarm_cache:
+            if alarm.get("id") in fired_ids:
+                alarm["status"] = "triggered"
+                if alarm.get("repeat", "once") in ("once", ""):
+                    alarm["active"] = 0
+        _alarm_cache[:] = [alarm for alarm in _alarm_cache if alarm.get("active", 1)]
+
+
+def alarm_scheduler_tick(now_time: str | None = None, cache_now: float | None = None) -> None:
+    current_time = now_time or datetime.datetime.now().strftime("%H:%M")
+    alarms = refresh_alarm_cache(now=cache_now)
+    updates = []
+    for alarm in alarms:
+        if alarm.get("time") != current_time:
+            continue
+        alarm_id = alarm.get("id")
+        label = alarm.get("label", "Reminder")
+        repeat = alarm.get("repeat", "once")
+        message = groq_as_manager("alarm_fire", f"Alarm: {label}", max_tokens=60)
+        send_os_notification("J.A.R.V.I.S Reminder", message, timeout=15)
+        push_system_event("alarm", message, {"label": label, "repeat": repeat})
+        if repeat in ("once", ""):
+            updates.append(("UPDATE alarms SET active=0, status='triggered' WHERE id=?", (alarm_id,)))
+        else:
+            updates.append(("UPDATE alarms SET status='triggered' WHERE id=?", (alarm_id,)))
+    _apply_fired_alarm_updates(updates)
+
 
 def push_system_event(event_type: str, msg: str, data: dict = None):
     """Push proactive event into neural_state event_queue only."""
@@ -171,49 +230,13 @@ def _reminder_scheduler():
     ✅ BUG-3 FIX: push_system_event ONLY — no heartbeat_queue append.
     ✅ BUG-R FIX: daily/weekly alarms stay active after firing.
     """
+    refresh_alarm_cache()
     while True:
         try:
-            # ✅ BUG-2 FIX: use "%H:%M" — matches "15:30" stored in DB
-            now_time = datetime.datetime.now().strftime("%H:%M")
-            alarms   = db_read(
-                "SELECT * FROM alarms WHERE active=1 AND time=?",
-                (now_time,),
-            )
-
-            updates = []
-            for alarm in alarms:
-                alarm_id = alarm.get("id")
-                label    = alarm.get("label", "Reminder")
-                repeat   = alarm.get("repeat", "once")
-
-                raw = f"Alarm: {label}"
-                msg = groq_as_manager("alarm_fire", raw, max_tokens=60)
-                send_os_notification("J.A.R.V.I.S Reminder", msg, timeout=15)
-
-                # ✅ BUG-3 FIX: push to event_queue ONLY — no heartbeat_queue append
-                push_system_event("alarm", msg, {"label": label, "repeat": repeat})
-
-                # ✅ BUG-R FIX: only deactivate one-time alarms
-                if repeat in ("once", ""):
-                    updates.append((
-                        "UPDATE alarms SET active=0, status='triggered' WHERE id=?",
-                        (alarm_id,),
-                    ))
-                else:
-                    # daily/weekly stay active — just mark triggered
-                    updates.append((
-                        "UPDATE alarms SET status='triggered' WHERE id=?",
-                        (alarm_id,),
-                    ))
-
-            if updates:
-                db_write_many(updates)
-
+            alarm_scheduler_tick()
         except Exception as e:
             log.error("reminder_scheduler: %s", e)
-
         time.sleep(60)
-
 
 def start_background_threads():
     threading.Thread(target=system_event_monitor, daemon=True, name="SysEventMon").start()

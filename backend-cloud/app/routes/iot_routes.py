@@ -13,7 +13,7 @@ from smarthome import (
 from monitor import (
     cameras, cam_id_counter, cam_lock,
     motion_cfg, monitor_engine_running,
-    _gen_frames
+    _gen_frames, get_monitor_cache, invalidate_monitor_cache,
 )
 from error_utils import api_errors
 from config import EXECUTION_MODE
@@ -187,7 +187,7 @@ def camera_remove(cam_id):
 @iot.route("/api/monitor/list", methods=["GET"])
 @api_errors
 def monitor_list():
-    rows = db_read("SELECT * FROM monitors ORDER BY id ASC")
+    rows = get_monitor_cache()
     return jsonify({"monitors": rows, "count": len(rows), "engine": monitor_engine_running})
 
 @iot.route("/api/monitor/add", methods=["POST","OPTIONS"])
@@ -202,10 +202,12 @@ def monitor_add():
     if not url: return jsonify({"error":"No url provided"}), 400
     # ✅ FIX C2: store url/timeout in config JSON column, not as separate columns
     cfg_json = json.dumps({"url": url, "timeout": timeout})
-    db_write(
+    added = db_write(
         "INSERT INTO monitors(name,type,config,status,created_at,active) VALUES(?,?,?,'running',?,1)",
         (name, typ, cfg_json, ts())
     )
+    if added:
+        invalidate_monitor_cache()
     return jsonify({"ok": True, "message":f"Monitor added: {name}"})
 
 @iot.route("/api/monitor/pause", methods=["POST","OPTIONS"])
@@ -216,8 +218,10 @@ def monitor_pause():
     mon_id = body.get("id")
     paused = bool(body.get("paused", True))
     if mon_id is None: return jsonify({"error":"No id"}), 400
-    db_write("UPDATE monitors SET status=? WHERE id=?",
-             ("paused" if paused else "running", mon_id))
+    updated = db_write("UPDATE monitors SET status=? WHERE id=?",
+                       ("paused" if paused else "running", mon_id))
+    if updated:
+        invalidate_monitor_cache()
     return jsonify({"ok": True, "paused": paused})
 
 @iot.route("/api/monitor/delete", methods=["POST","OPTIONS"])
@@ -226,7 +230,9 @@ def monitor_delete():
     if request.method == "OPTIONS": return "", 204
     mon_id = (request.get_json(silent=True) or {}).get("id")
     if mon_id is None: return jsonify({"error":"No id"}), 400
-    db_write("UPDATE monitors SET active=0 WHERE id=?", (mon_id,))
+    updated = db_write("UPDATE monitors SET active=0 WHERE id=?", (mon_id,))
+    if updated:
+        invalidate_monitor_cache()
     return jsonify({"ok": True})
 
 @iot.route("/api/monitor/log", methods=["GET"])
@@ -245,10 +251,7 @@ def monitor_log():
 @api_errors
 def monitor_status():
     """✅ FIX C3: parse url/timeout from config JSON, don't select non-existent columns."""
-    rows = db_read(
-        "SELECT id,name,type,config,status,last_check,trigger_count,active"
-        " FROM monitors WHERE active=1 ORDER BY id ASC"
-    )
+    rows = [monitor for monitor in get_monitor_cache() if monitor.get("active", 1)]
     result = []
     for r in rows:
         try:   cfg = json.loads(r.get("config","{}") or "{}")

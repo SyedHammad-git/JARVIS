@@ -43,6 +43,104 @@ motion_cfg = {
 # Key = alert type (str), Value = last fired epoch (float)
 _alert_cooldowns: dict = {}
 _ALERT_COOLDOWN_SECS   = 300   # one alert per type every 5 minutes max
+MONITOR_CACHE_TTL_SECONDS = 30 * 60
+MONITOR_DB_HEARTBEAT_SECONDS = 15 * 60
+_monitor_cache_lock = Lock()
+_monitor_cache: list[dict] | None = None
+_monitor_cache_synced_at = 0.0
+_monitor_db_state: dict[int, dict] = {}
+
+
+def refresh_monitor_cache(force: bool = False, now: float | None = None) -> list[dict]:
+    global _monitor_cache, _monitor_cache_synced_at, _monitor_db_state
+    instant = time.monotonic() if now is None else now
+    with _monitor_cache_lock:
+        if (_monitor_cache is not None and not force
+                and instant - _monitor_cache_synced_at < MONITOR_CACHE_TTL_SECONDS):
+            return [dict(monitor) for monitor in _monitor_cache]
+        monitors = db_read("SELECT * FROM monitors ORDER BY id ASC")
+        _monitor_cache = [dict(monitor) for monitor in monitors]
+        _monitor_cache_synced_at = instant
+        _monitor_db_state = {
+            monitor["id"]: {
+                "persisted_status": monitor.get("status", ""),
+                "last_write": instant,
+                "pending_trigger_count": 0,
+            }
+            for monitor in _monitor_cache if monitor.get("id") is not None
+        }
+        return [dict(monitor) for monitor in _monitor_cache]
+
+
+def invalidate_monitor_cache() -> None:
+    global _monitor_cache, _monitor_cache_synced_at
+    with _monitor_cache_lock:
+        _monitor_cache = None
+        _monitor_cache_synced_at = 0.0
+
+
+def get_monitor_cache() -> list[dict]:
+    return refresh_monitor_cache()
+
+
+def _record_monitor_check(
+    monitor: dict,
+    status: str,
+    last_check: str,
+    result: str,
+    alert_sent: int,
+    increment_trigger_count: bool,
+    write_history: bool = True,
+) -> None:
+    monitor_id = monitor.get("id")
+    if monitor_id is None:
+        return
+    with _monitor_cache_lock:
+        cached = next((item for item in (_monitor_cache or []) if item.get("id") == monitor_id), None)
+        if cached is None:
+            if _monitor_cache is None:
+                return
+            cached = dict(monitor)
+            _monitor_cache.append(cached)
+        state = _monitor_db_state.setdefault(monitor_id, {
+            "persisted_status": monitor.get("status", ""),
+            "last_write": time.monotonic(),
+            "pending_trigger_count": 0,
+        })
+        cached["status"] = status
+        cached["last_check"] = last_check
+        if increment_trigger_count:
+            cached["trigger_count"] = int(cached.get("trigger_count") or 0) + 1
+            state["pending_trigger_count"] += 1
+
+        now = time.monotonic()
+        state_changed = status != state["persisted_status"]
+        heartbeat_due = now - state["last_write"] >= MONITOR_DB_HEARTBEAT_SECONDS
+        if not state_changed and not heartbeat_due:
+            return
+
+        if increment_trigger_count:
+            update = (
+                "UPDATE monitors SET status=?,last_check=?,trigger_count=trigger_count+? WHERE id=?",
+                (status, last_check, state["pending_trigger_count"], monitor_id),
+            )
+        else:
+            update = (
+                "UPDATE monitors SET status=?,last_check=? WHERE id=?",
+                (status, last_check, monitor_id),
+            )
+        writes = [update]
+        if write_history:
+            writes.append((
+                "INSERT INTO monitor_log(monitor_id,monitor_name,result,alert_sent,created_at)"
+                " VALUES(?,?,?,?,?)",
+                (monitor_id, cached.get("name", ""), result, alert_sent, last_check),
+            ))
+        writes_ok = db_write_many(writes)
+        if writes_ok:
+            state["persisted_status"] = status
+            state["last_write"] = now
+            state["pending_trigger_count"] = 0
 
 
 def _should_alert(key: str, cooldown: int = _ALERT_COOLDOWN_SECS) -> bool:
@@ -280,17 +378,10 @@ def check_monitor(mon: dict):
             result_str = f"HTTP {r.status_code} in {elapsed}ms"
 
             now = ts()
-            db_write_many([
-                (
-                    "UPDATE monitors SET status=?,last_check=?,trigger_count=trigger_count+1 WHERE id=?",
-                    (status, now, mon_id),
-                ),
-                (
-                    "INSERT INTO monitor_log(monitor_id,monitor_name,result,alert_sent,created_at)"
-                    " VALUES(?,?,?,?,?)",
-                    (mon_id, name, result_str, 0 if status == "up" else 1, now),
-                ),
-            ])
+            _record_monitor_check(
+                mon, status, now, result_str, 0 if status == "up" else 1,
+                increment_trigger_count=True,
+            )
 
             if status == "down":
                 add_alert(f"🔴 Monitor DOWN: {name} (HTTP {r.status_code})")
@@ -312,36 +403,41 @@ def check_monitor(mon: dict):
             result_str = f"Ping {'OK' if status == 'up' else 'FAIL'} in {elapsed}ms"
 
             now = ts()
-            db_write_many([
-                (
-                    "UPDATE monitors SET status=?,last_check=? WHERE id=?",
-                    (status, now, mon_id),
-                ),
-                (
-                    "INSERT INTO monitor_log(monitor_id,monitor_name,result,alert_sent,created_at)"
-                    " VALUES(?,?,?,?,?)",
-                    (mon_id, name, result_str, 0 if status == "up" else 1, now),
-                ),
-            ])
+            _record_monitor_check(
+                mon, status, now, result_str, 0 if status == "up" else 1,
+                increment_trigger_count=False,
+            )
 
             if status == "down":
                 add_alert(f"🔴 Ping DOWN: {name}")
 
     except Exception as e:
-        db_write("UPDATE monitors SET status=?,last_check=? WHERE id=?", ("error", ts(), mon_id))
+        _record_monitor_check(
+            mon, "error", ts(), type(e).__name__, 0,
+            increment_trigger_count=False,
+            write_history=False,
+        )
         log.error("Monitor check '%s': %s", name, e)
+
+
+def monitor_engine_tick():
+    mons = [
+        monitor for monitor in refresh_monitor_cache()
+        if monitor.get("active", 1) and monitor.get("status") != "paused"
+    ]
+    for monitor in mons:
+        threading.Thread(target=check_monitor, args=(monitor,), daemon=True).start()
 
 
 def run_monitor_engine():
     global monitor_engine_running
     monitor_engine_running = True
     log.info("Monitor engine started")
+    refresh_monitor_cache()
 
     while True:
         try:
-            mons = db_read("SELECT * FROM monitors WHERE active=1 AND status!='paused'")
-            for m in mons:
-                threading.Thread(target=check_monitor, args=(m,), daemon=True).start()
+            monitor_engine_tick()
         except Exception as e:
             log.error("Monitor engine: %s", e)
         time.sleep(60)

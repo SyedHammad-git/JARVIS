@@ -6,6 +6,7 @@ import datetime, logging
 from flask import Blueprint, jsonify, request
 from database import db_read, db_write, db_scalar, ts
 from memory import get_facts, learn_fact, forget_fact, get_context
+from neural import invalidate_alarm_cache
 from auth import add_alert
 from error_utils import api_errors
 
@@ -89,10 +90,12 @@ def alarms():
                 break
             except ValueError:
                 pass
-        db_write(
+        saved = db_write(
             "INSERT INTO alarms(time,label,repeat,active,created_at,status) VALUES(?,?,?,1,?,?)",
             (time_, label, repeat, ts(), "pending")
         )
+        if saved:
+            invalidate_alarm_cache()
         add_alert(f"Alarm set: {label} @ {time_}")
         return jsonify({"ok": True, "message": f"Alarm set for {time_}, Sir."})
     rows = db_read("SELECT * FROM alarms WHERE active=1 ORDER BY time ASC")
@@ -101,7 +104,9 @@ def alarms():
 @api_errors
 def alarm_cancel(alarm_id):
     if request.method == "OPTIONS": return "", 204
-    db_write("UPDATE alarms SET active=0 WHERE id=?", (alarm_id,))
+    changed = db_write("UPDATE alarms SET active=0 WHERE id=?", (alarm_id,))
+    if changed:
+        invalidate_alarm_cache()
     return jsonify({"ok": True, "message":"Alarm cancelled, Sir."})
 
 @data.route("/api/alarms/upcoming", methods=["GET"])

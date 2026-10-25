@@ -10,7 +10,7 @@ from flask_socketio import Namespace, disconnect
 from socketio.exceptions import ConnectionRefusedError, TimeoutError as SocketIOTimeout
 
 from auth import add_alert
-from devices.pairing import get_device, touch_last_seen, validate_device_token
+from devices.pairing import get_device, get_device_status_cached, touch_last_seen, validate_device_token
 from extensions import socketio
 from notifications import send_discord_alert
 
@@ -49,7 +49,7 @@ def disconnect_device(device_id: str) -> None:
 
 def call_device(device_id: str, action: str, args: dict | None = None, timeout: int = CALL_TIMEOUT) -> dict:
     """Send command to the paired device; wait for ack. Never raises to the agent."""
-    device = get_device(device_id)
+    device = get_device_status_cached(device_id)
     if not device:
         return {"ok": False, "error": "device_offline"}
     if int(device.get("revoked") or 0):

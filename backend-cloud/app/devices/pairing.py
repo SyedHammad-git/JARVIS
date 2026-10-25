@@ -5,12 +5,17 @@ import hashlib
 import hmac
 import logging
 import secrets
+import time
+from threading import Lock
 
 from database import db_read, db_write, ts
 
 log = logging.getLogger("jarvis.devices")
 
 _DUMMY_HASH = "0" * 64
+DEVICE_STATUS_CACHE_TTL = 60
+_device_status_cache_lock = Lock()
+_device_status_cache: dict[str, tuple[dict | None, float]] = {}
 
 
 def hash_token(token: str) -> str:
@@ -59,6 +64,33 @@ def get_device(device_id: str) -> dict | None:
     return rows[0] if rows else None
 
 
+def get_device_status_cached(device_id: str) -> dict | None:
+    now = time.monotonic()
+    with _device_status_cache_lock:
+        cached = _device_status_cache.get(device_id)
+        if cached and now - cached[1] < DEVICE_STATUS_CACHE_TTL:
+            return dict(cached[0]) if cached[0] is not None else None
+    rows = db_read(
+        "SELECT device_id, revoked FROM devices WHERE device_id=?",
+        (device_id,),
+    )
+    row = rows[0] if rows else None
+    with _device_status_cache_lock:
+        _device_status_cache[device_id] = (dict(row) if row else None, now)
+    return dict(row) if row else None
+
+
+def invalidate_device_status_cache(device_id: str, revoked: bool | None = None) -> None:
+    with _device_status_cache_lock:
+        if revoked is None:
+            _device_status_cache.pop(device_id, None)
+        else:
+            _device_status_cache[device_id] = (
+                {"device_id": device_id, "revoked": int(revoked)},
+                time.monotonic(),
+            )
+
+
 def touch_last_seen(device_id: str) -> None:
     db_write("UPDATE devices SET last_seen=? WHERE device_id=?", (ts(), device_id))
 
@@ -67,7 +99,10 @@ def revoke_device(device_id: str) -> bool:
     row = get_device(device_id)
     if not row:
         return False
-    db_write("UPDATE devices SET revoked=1 WHERE device_id=?", (device_id,))
+    if not db_write("UPDATE devices SET revoked=1 WHERE device_id=?", (device_id,)):
+        invalidate_device_status_cache(device_id)
+        return False
+    invalidate_device_status_cache(device_id, revoked=True)
     log.info("Revoked device_id=%s", device_id)
     try:
         from devices.gateway import disconnect_device

@@ -12,7 +12,7 @@ from extensions import socketio
 
 class CallDeviceTests(unittest.TestCase):
     def setUp(self):
-        active_device = patch("devices.gateway.get_device", return_value={"revoked": 0})
+        active_device = patch("devices.gateway.get_device_status_cached", return_value={"revoked": 0})
         active_device.start()
         self.addCleanup(active_device.stop)
 
@@ -71,7 +71,7 @@ class CallDeviceTests(unittest.TestCase):
     def test_revoked_device_is_refused_before_emit(self):
         _bind("dev_revoked", "sid_revoked")
         try:
-            with patch("devices.gateway.get_device", return_value={"revoked": 1}), \
+            with patch("devices.gateway.get_device_status_cached", return_value={"revoked": 1}), \
                  patch("devices.gateway.socketio.call") as mock_call:
                 self.assertEqual(
                     call_device("dev_revoked", "open_app", {"target": "notepad"}),
@@ -95,7 +95,9 @@ class TokenValidateTests(unittest.TestCase):
 
 class LiveRevocationTests(unittest.TestCase):
     def test_revoke_disconnects_socket_and_refuses_commands(self):
-        from server import app
+        from app import create_app
+
+        app = create_app(testing=True)
 
         device_id, token = issue_device("live-revoke-test")
         client = socketio.test_client(

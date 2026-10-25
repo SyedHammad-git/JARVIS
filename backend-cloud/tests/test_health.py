@@ -4,6 +4,7 @@ import threading
 from flask import Flask
 
 import database
+from routes import core_routes
 from routes.core_routes import core
 
 
@@ -56,3 +57,19 @@ def test_health_reports_sqlite_fallback_without_neon_probe(monkeypatch):
     assert payload["neon_select_1_latency_ms"] is None
     assert payload["pgvector_row_count"] is None
     assert payload["sqlite_fallback_active"] is True
+
+
+def test_health_database_metrics_are_cached_for_30_seconds(monkeypatch):
+    calls = []
+    monkeypatch.setattr(database, "DB_BACKEND", "postgres")
+    monkeypatch.setattr(database, "SQLITE_FALLBACK_ACTIVE", False)
+    monkeypatch.setattr(core_routes, "db_scalar", lambda _sql: calls.append("select") or 1)
+    monkeypatch.setattr(core_routes, "db_read", lambda _sql: calls.append("vector_count") or [{"count": 3}])
+
+    first = core_routes._database_health_snapshot(now=100)
+    second = core_routes._database_health_snapshot(now=129.9)
+    assert calls == ["select", "vector_count"]
+    assert second == first
+
+    core_routes._database_health_snapshot(now=130)
+    assert calls == ["select", "vector_count", "select", "vector_count"]

@@ -4,6 +4,7 @@ FIXED: M5 add_alert on do_command, L5 _pulse() imports cached at module level
 """
 import time
 import logging
+from threading import Lock
 from pathlib import Path
 
 from flask import Blueprint, jsonify, request, send_file
@@ -30,6 +31,40 @@ from error_utils import api_errors
 log  = logging.getLogger("jarvis.routes.core")
 core = Blueprint("core", __name__)
 _base = Path(__file__).parent.parent
+_DB_HEALTH_CACHE_TTL = 30
+_db_health_cache_lock = Lock()
+_db_health_cache = {"checked_at": 0.0, "backend": None, "payload": None}
+
+
+def _database_health_snapshot(now: float | None = None) -> dict:
+    instant = time.monotonic() if now is None else now
+    backend = database.DB_BACKEND
+    with _db_health_cache_lock:
+        cached = _db_health_cache
+        if (cached["payload"] is not None and cached["backend"] == backend
+                and instant - cached["checked_at"] < _DB_HEALTH_CACHE_TTL):
+            return dict(cached["payload"])
+
+        started = time.perf_counter()
+        db_ok = db_scalar("SELECT 1") == 1
+        latency_ms = round((time.perf_counter() - started) * 1000, 2) if backend == "postgres" else None
+        vector_rows = None
+        if backend == "postgres":
+            try:
+                counts = db_read("SELECT COUNT(*) AS count FROM memory_vectors")
+                if counts:
+                    vector_rows = int(counts[0].get("count", 0))
+            except Exception:
+                vector_rows = None
+        payload = {
+            "db_ok": db_ok,
+            "db_backend": backend,
+            "neon_select_1_latency_ms": latency_ms,
+            "pgvector_row_count": vector_rows,
+            "sqlite_fallback_active": bool(database.SQLITE_FALLBACK_ACTIVE),
+        }
+        _db_health_cache.update(checked_at=instant, backend=backend, payload=payload)
+        return dict(payload)
 
 
 def _pulse() -> dict:
@@ -189,15 +224,8 @@ def health():
     import psutil
 
     # ── Database ───────────────────────────────────────────────────
-    db_backend = database.DB_BACKEND
-    db_started = time.perf_counter()
-    db_ok = db_scalar("SELECT 1") == 1
-    db_latency_ms = round((time.perf_counter() - db_started) * 1000, 2) if db_backend == "postgres" else None
-    pgvector_rows = None
-    if db_backend == "postgres":
-        vector_counts = db_read("SELECT COUNT(*) AS count FROM memory_vectors")
-        if vector_counts:
-            pgvector_rows = int(vector_counts[0].get("count", 0))
+    db_health = _database_health_snapshot()
+    db_ok = db_health["db_ok"]
 
     # ── CPU headroom (existing resource check, kept as-is) ──────────
     cpu_ok = psutil.cpu_percent(interval=0.1) < 95
@@ -238,10 +266,10 @@ def health():
     return jsonify({
         "status":       status,
         "db":           "ok" if db_ok else "error",
-        "db_backend":   db_backend,
-        "neon_select_1_latency_ms": db_latency_ms,
-        "pgvector_row_count": pgvector_rows,
-        "sqlite_fallback_active": bool(database.SQLITE_FALLBACK_ACTIVE),
+        "db_backend":   db_health["db_backend"],
+        "neon_select_1_latency_ms": db_health["neon_select_1_latency_ms"],
+        "pgvector_row_count": db_health["pgvector_row_count"],
+        "sqlite_fallback_active": db_health["sqlite_fallback_active"],
         "cpu_ok":       cpu_ok,
         "ai_providers": providers,
         "ai_available": ai_available,

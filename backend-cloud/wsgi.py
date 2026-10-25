@@ -6,7 +6,12 @@
 """
 import logging
 import os
+import sys
 from pathlib import Path
+
+APP_DIR = Path(__file__).resolve().parent / "app"
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
 
 # ── 1. Load .env ──────────────────────────────────────────────────
 try:
@@ -50,8 +55,14 @@ logging.basicConfig(
 )
 log = logging.getLogger("jarvis")
 
-# ── 3. Flask app ──────────────────────────────────────────────────
-from flask import Flask, jsonify
+from flask import jsonify
+
+from app import create_app
+from extensions import socketio
+
+
+app = create_app()
+
 try:
     from flask_limiter import Limiter
     from flask_limiter.util import get_remote_address
@@ -60,17 +71,21 @@ except ImportError:
     _LIMITER_OK = False
     print("[SERVER] ⚠ flask-limiter not installed — pip install flask-limiter")
 
+if _LIMITER_OK:
+    limiter = Limiter(
+        get_remote_address,
+        app=app,
+        default_limits=["200 per minute"],
+        storage_uri="memory://",
+    )
+    print("[SERVER] ✅ Rate limiter active (200 req/min default)")
 
-app = Flask(__name__, static_folder=None)
 
 # Import config AFTER dotenv so env vars are available
-import config
-app.config["SECRET_KEY"]         = config.FLASK_SECRET   # ✅ FIX H3: from DB/env, never hardcoded
-app.config["JSON_SORT_KEYS"]     = False
+import config as app_config
+app.config["SECRET_KEY"] = getattr(app_config, "FLASK_SECRET", app.config.get("SECRET_KEY"))
+app.config["JSON_SORT_KEYS"] = False
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024
-
-from extensions import socketio
-socketio.init_app(app)
 
 # ── 4. CORS ───────────────────────────────────────────────────────
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*")
@@ -80,27 +95,6 @@ try:
     log.info("CORS enabled (origins: %s)", CORS_ORIGINS)
 except ImportError:
     log.warning("flask-cors not installed — CORS headers missing (pip install flask-cors)")
-
-# ── 5. Import all modules ─────────────────────────────────────────
-import database, notifications, auth
-import ai_engine, tools, agent, command
-import memory, smarthome, monitor, neural
-from vision.snapshots import cleanup_snapshots
-
-cleanup_snapshots()
-
-# ── 6. Register blueprints ────────────────────────────────────────
-from routes.core_routes   import core
-from routes.ai_routes     import ai
-from routes.system_routes import system
-from routes.data_routes   import data
-from routes.iot_routes    import iot
-from devices.http         import devices_bp
-from devices.gateway      import register_namespace
-
-for bp in (core, ai, system, data, iot, devices_bp):
-    app.register_blueprint(bp)
-register_namespace(socketio)
 
 log.info("All blueprints registered — %d routes total",
          len(list(app.url_map.iter_rules())))
@@ -120,16 +114,6 @@ def internal_error(e):
     log.error("Unhandled 500: %s", e)
     return jsonify({"error": "Internal server error", "code": 500}), 500
 
-# ── Rate limiter ─────────────────────────────────────────────────
-if _LIMITER_OK:
-    limiter = Limiter(
-        get_remote_address,
-        app=app,
-        default_limits=["200 per minute"],
-        storage_uri="memory://",
-    )
-    print("[SERVER] ✅ Rate limiter active (200 req/min default)")
-
 @app.errorhandler(Exception)
 def unhandled_exception(e):
     # Pass werkzeug HTTPException through unchanged so 401/403/429 keep
@@ -139,11 +123,6 @@ def unhandled_exception(e):
         return e
     log.exception("Unhandled exception: %s", e)
     return jsonify({"error": "An unexpected error occurred", "code": 500}), 500
-
-# ── 8. Start background threads ───────────────────────────────────
-monitor.start_background_threads()
-neural.start_background_threads()
-log.info("All background threads started")
 
 # ── 9. Startup banner ─────────────────────────────────────────────
 from tools import AGENT_TOOLS
