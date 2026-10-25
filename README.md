@@ -12,12 +12,19 @@ Built by Hammad • Iron Man Edition
 pip install -r requirements.txt
 
 # 2. Set up .env
-cp .env .env.local
+cp .env.example .env
 # Edit .env — add your API keys
 
-# 3. Run
+# 3. Run (production — Waitress WSGI server, 8 threads, binds to 127.0.0.1:5000)
 python server.py
+
+# 3b. Run in debug mode (Flask dev server, auto-reload)
+set JARVIS_DEBUG=true && python server.py
 ```
+
+> **Server**: JARVIS uses [Waitress](https://docs.pylonsproject.org/projects/waitress/) in
+> production mode (`JARVIS_DEBUG=false`, the default). Set `JARVIS_HOST`, `JARVIS_PORT`,
+> or `JARVIS_DEBUG` in `.env` to override defaults.
 
 Open: http://localhost:5000  
 Mobile: http://localhost:5000/mobile  
@@ -72,6 +79,33 @@ POSTGRES_DSN=postgresql://postgres:PASSWORD@db.REF.supabase.co:5432/postgres
 ```
 
 Switch = change 1 env variable. Zero code changes.
+
+---
+
+## Device gateway (Socket.IO)
+
+Paired PCs connect on namespace `/device` (`wss://` in production).
+
+- **Local Windows:** `py server.py` uses Flask-SocketIO + Werkzeug
+  (`allow_unsafe_werkzeug=True`), default bind `127.0.0.1`. Waitress cannot
+  serve WebSockets — it is used only when `DEVICE_GATEWAY=off`.
+- **Production (Linux):** one Gunicorn threaded worker (multiple workers
+  need sticky sessions and a message queue):
+
+```bash
+gunicorn --worker-class gthread --threads 100 -w 1 server:app
+```
+
+Pair a device (PIN required): `POST /api/devices/pair` then run
+`py tools_dev/fake_device.py --url http://127.0.0.1:5000 --device-id … --token …`
+
+PowerShell example (token is shown once; do not commit it):
+
+```powershell
+$pair = Invoke-RestMethod -Method POST http://127.0.0.1:5000/api/devices/pair `
+  -ContentType "application/json" -Body '{"name":"dev-pc","pin":"YOUR_PIN"}'
+py tools_dev/fake_device.py --url http://127.0.0.1:5000 --device-id $pair.device_id --token $pair.token
+```
 
 ---
 

@@ -5,7 +5,10 @@ from unittest.mock import patch
 
 import tools  # noqa: F401
 from tools.registry import REGISTRY
-from agent import execute_tool, run_agent, truncate_tool_result, _RESULT_LIMIT
+from agent import (
+    execute_tool, run_agent, truncate_tool_result, _RESULT_LIMIT,
+    _last_action_registry, _last_action_lock,
+)
 
 
 def _raw_tool_call(call_id, name, args):
@@ -53,6 +56,8 @@ class FakeLLM:
 
 class AgentLoopTests(unittest.TestCase):
     def setUp(self):
+        with _last_action_lock:
+            _last_action_registry.clear()
         self._weather = REGISTRY["get_weather"].handler
         self._open = REGISTRY["open_app"].local_impl
         REGISTRY["get_weather"].handler = lambda a: f"Weather in {a.get('city')}: 22C"
@@ -83,15 +88,60 @@ class AgentLoopTests(unittest.TestCase):
         self.assertIn("open_app", fake.tools_seen[0])
         self.assertLessEqual(fake.calls, 6)
 
-    def test_device_tool_remote_stub(self):
-        raw = execute_tool(
-            "open_app",
-            {"target": "notepad"},
-            {"execution_mode": "remote", "confirmed": True},
-        )
+    def test_device_tool_remote_offline(self):
+        with patch("devices.gateway.call_device", return_value={"ok": False, "error": "device_offline"}):
+            raw = execute_tool(
+                "open_app",
+                {"target": "notepad"},
+                {"execution_mode": "remote", "device_id": "dev_test", "confirmed": True},
+            )
         data = json.loads(raw)
         self.assertFalse(data["ok"])
-        self.assertEqual(data["error"], "remote_not_implemented")
+        self.assertEqual(data["error"], "device_offline")
+
+    def test_device_tool_remote_ack(self):
+        with patch("devices.gateway.call_device",
+                   return_value={"ok": True, "message": "fake executed"}) as mock_call:
+            raw = execute_tool(
+                "open_app",
+                {"target": "notepad"},
+                {"execution_mode": "remote", "device_id": "dev_live", "confirmed": True},
+            )
+        mock_call.assert_called_once_with("dev_live", "open_app", {"target": "notepad"})
+        data = json.loads(raw)
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["message"], "fake executed")
+
+    def test_remote_offline_hides_device_tools_and_explains(self):
+        class OfflineLLM:
+            def __call__(self, messages, tools=None, **kwargs):
+                names = {t["function"]["name"] for t in (tools or [])}
+                self.names = names
+                self.sys = messages[0]["content"]
+                return {
+                    "ok": True, "text": "The paired PC is not connected, Sir.",
+                    "model": "fake", "error": "", "tool_calls": [],
+                    "raw_assistant_message": {
+                        "role": "assistant",
+                        "content": "The paired PC is not connected, Sir.",
+                    },
+                }
+
+        fake = OfflineLLM()
+        with patch("agent.chat", fake), \
+             patch("agent.save_message", return_value=True), \
+             patch("agent.load_recent_messages", return_value=[]), \
+             patch("agent.prune_conversation", return_value=True), \
+             patch("devices.gateway.is_online", return_value=False):
+            out = run_agent(
+                "open notepad",
+                session_id="test-offline",
+                ctx={"execution_mode": "remote", "device_id": "dev_off", "confirmed": True},
+            )
+        self.assertTrue(out["ok"])
+        self.assertNotIn("open_app", fake.names)
+        self.assertIn("device_offline", fake.sys)
+        self.assertIn("not connected", out["reply"].lower())
 
     def test_high_risk_needs_confirmation(self):
         raw = execute_tool(

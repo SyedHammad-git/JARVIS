@@ -1136,6 +1136,10 @@ select.minp option{background:#000e24;color:var(--tx);}
         <div class="sdot chk" id="SDOT"></div>
         <span id="STXT" style="font-family:var(--fm);font-size:10px;letter-spacing:1px">CONNECTING</span>
       </div>
+      <div class="spill" style="margin-left:8px;" title="Paired PC">
+        <div class="sdot off" id="DEV_DOT"></div>
+        <span id="DEV_TXT" style="font-family:var(--fm);font-size:10px;letter-spacing:1px">PC</span>
+      </div>
       <div class="spill" style="margin-left:8px;gap:4px;">
         <span style="font-family:var(--fm);font-size:8px;color:var(--txd);letter-spacing:1px;">AI:</span>
         <span id="AI_MODEL_IND" style="font-family:var(--fh);font-size:8px;color:var(--g);letter-spacing:2px;font-weight:700;">GROQ</span>
@@ -3747,6 +3751,16 @@ async function syncPulseStates(){
     // Update CAM badge  
     const camb=document.getElementById('CAM_BADGE');
     if(camb) camb.textContent=d.cam_on+' ON';
+    try{
+      const dr=await fetch(SERVER+'/api/device/status');
+      if(dr.ok){
+        const ds=await dr.json();
+        const ddot=document.getElementById('DEV_DOT');
+        const dtxt=document.getElementById('DEV_TXT');
+        if(ddot) ddot.className='sdot '+(ds.online?'on':'off');
+        if(dtxt) dtxt.textContent=ds.online?(ds.label==='local'?'PC LOCAL':'PC ONLINE'):'PC OFFLINE';
+      }
+    }catch(e){}
     // Update Discord dot in smart home panel
     const tgdot=document.getElementById('TG_DOT');
     const tgstat=document.getElementById('TG_STATUS');

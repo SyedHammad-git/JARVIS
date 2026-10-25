@@ -20,35 +20,35 @@ import secrets
 
 try:
     import bcrypt
-    _BCRYPT_OK = True
-except ImportError:
-    bcrypt = None
-    _BCRYPT_OK = False
+except ImportError:  # pragma: no cover
+    raise RuntimeError(
+        "[AUTH] bcrypt is required but not installed.\n"
+        "  Run: pip install bcrypt>=4.0.0\n"
+        "  Then restart JARVIS."
+    )
 
 # Shell chain/injection operators — used by safety_check()
 _CHAIN_OPS = ["&&", "||", ";", "|", "`", "$(", ">", "<", "\n"]
 
 # ── PIN verification ──────────────────────────────────────────────
 def hash_pin(pin: str) -> str:
-    """Hash PIN with bcrypt. Falls back to plaintext if bcrypt missing."""
-    if _BCRYPT_OK:
-        return bcrypt.hashpw(pin.encode(), bcrypt.gensalt()).decode()
-    return pin
+    """Hash PIN with bcrypt (required — no plaintext fallback)."""
+    return bcrypt.hashpw(pin.encode(), bcrypt.gensalt()).decode()
 
 
 def verify_pin(provided_pin: str) -> bool:
-    """Constant-time PIN verification with bcrypt support."""
+    """Constant-time PIN verification with bcrypt."""
     stored = cfg_get("pin", "")
     if not stored:
         return False
     # Try bcrypt first if stored hash looks like bcrypt
-    if _BCRYPT_OK and stored.startswith("$2"):
+    if stored.startswith("$2"):
         try:
-            import bcrypt as _bc
-            return _bc.checkpw(provided_pin.encode(), stored.encode())
+            return bcrypt.checkpw(provided_pin.encode(), stored.encode())
         except Exception:
             return False
-    # Fallback: constant-time string compare
+    # Legacy plaintext compare — constant-time to prevent timing attacks.
+    # Once verified, the caller should re-hash with bcrypt and store it.
     return secrets.compare_digest(str(provided_pin), str(stored))
 def safety_check(cmd: str) -> tuple:
     """Return (safe: bool, matched_pattern: str)."""

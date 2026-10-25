@@ -69,6 +69,9 @@ app.config["SECRET_KEY"]         = config.FLASK_SECRET   # ✅ FIX H3: from DB/e
 app.config["JSON_SORT_KEYS"]     = False
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024
 
+from extensions import socketio
+socketio.init_app(app)
+
 # ── 4. CORS ───────────────────────────────────────────────────────
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*")
 try:
@@ -89,9 +92,12 @@ from routes.ai_routes     import ai
 from routes.system_routes import system
 from routes.data_routes   import data
 from routes.iot_routes    import iot
+from devices.http         import devices_bp
+from devices.gateway      import register_namespace
 
-for bp in (core, ai, system, data, iot):
+for bp in (core, ai, system, data, iot, devices_bp):
     app.register_blueprint(bp)
+register_namespace(socketio)
 
 log.info("All blueprints registered — %d routes total",
          len(list(app.url_map.iter_rules())))
@@ -142,7 +148,7 @@ from notifications import PLYER_OK
 from config import (
     GROQ_KEY, GEMINI_KEY, OPENROUTER_KEY, WEATHER_KEY,
     CV2_OK, DDGS_OK, CLIP_OK,
-    heartbeat_cfg, EXECUTION_MODE, DEVICE_ID,
+    heartbeat_cfg, EXECUTION_MODE, DEVICE_ID, DEVICE_GATEWAY,
 )
 from database import DB_PATH
 
@@ -163,6 +169,7 @@ print(f"║   DDG Search  : {'✅ web search ready' if DDGS_OK else '⚠  pip in
 print(f"║   Clipboard   : {'✅ active' if CLIP_OK else '⚠  pip install pyperclip'}")
 print(f"║   Tools       : {len(AGENT_TOOLS)} agent tools")
 print(f"║   Exec mode   : {EXECUTION_MODE} ({DEVICE_ID})")
+print(f"║   Gateway     : {'✅ Socket.IO /device' if DEVICE_GATEWAY else 'off (Waitress)'}")
 print(f"║   Heartbeat   : {'✅ enabled' if heartbeat_cfg['enabled'] else '⏸  disabled'}")
 print("╠══════════════════════════════════════════════════════════╣")
 print("║   http://localhost:5000           Desktop UI             ║")
@@ -173,20 +180,36 @@ print("╚═══════════════════════�
 print()
 
 # ── 10. Run ───────────────────────────────────────────────────────
+# Flask-SocketIO WebSockets work with the Werkzeug server (local) and with
+# Gunicorn gthread (Linux). Waitress is NOT a WebSocket server — keep it
+# only when DEVICE_GATEWAY=off.
+#
+# Production (Linux, one process — multiple workers need sticky sessions
+# plus a message queue such as Redis):
+#   gunicorn --worker-class gthread --threads 100 -w 1 server:app
 if __name__ == "__main__":
-    host  = os.environ.get("JARVIS_HOST", "127.0.0.1")   # changed: 0.0.0.0 → 127.0.0.1
+    host  = os.environ.get("JARVIS_HOST", "127.0.0.1")
     port  = int(os.environ.get("JARVIS_PORT", 5000))
     debug = os.environ.get("JARVIS_DEBUG", "false").lower() == "true"
 
-    if debug:
-        log.warning("DEBUG mode is ON — disable in production (JARVIS_DEBUG=false)")
-        app.run(host=host, port=port, debug=True, threaded=True, use_reloader=False)
+    if DEVICE_GATEWAY:
+        if debug:
+            log.warning("DEBUG mode is ON — disable in production (JARVIS_DEBUG=false)")
+        log.info("Starting Flask-SocketIO on %s:%d (Werkzeug, threading)", host, port)
+        print(f"[JARVIS] ✅ Socket.IO gateway on http://{host}:{port}")
+        socketio.run(
+            app,
+            host=host,
+            port=port,
+            debug=False,
+            use_reloader=False,
+            allow_unsafe_werkzeug=True,
+        )
     else:
-        # ✅ Waitress: production WSGI server — no dev-server warnings, no thread leaks
         try:
             from waitress import serve as _waitress_serve
-            log.info("Starting Waitress on %s:%d (threads=8)", host, port)
-            print(f"[JARVIS] ✅ Waitress serving on http://{host}:{port}")
+            log.info("Starting Waitress on %s:%d (DEVICE_GATEWAY=off, no WebSocket)", host, port)
+            print(f"[JARVIS] ✅ Waitress serving on http://{host}:{port} (sockets disabled)")
             _waitress_serve(
                 app,
                 host=host,
@@ -198,6 +221,6 @@ if __name__ == "__main__":
             )
         except ImportError:
             log.error("waitress not installed — run: pip install waitress")
-            log.warning("Falling back to Flask dev server (not for production!)")
+            log.warning("Falling back to Flask dev server (HTTP only)")
             app.run(host=host, port=port, debug=False, threaded=True, use_reloader=False)
 

@@ -361,6 +361,10 @@ input[type=range]::-webkit-slider-runnable-track{width:100%;height:4px;backgroun
             <div class="status-dot" id="STATUS_DOT"></div>
             <span id="STATUS_TXT">CONNECTING</span>
         </div>
+        <div class="status-pill" title="Paired PC">
+            <div class="status-dot offline" id="DEV_STATUS_DOT"></div>
+            <span id="DEV_STATUS_TXT">PC</span>
+        </div>
     </div>
 
     <div class="content">
@@ -1006,6 +1010,14 @@ async function fetchStats() {
         const nu = document.getElementById('MNET_U');
         if (nd) nd.textContent = d.net_down + ' KB/s';
         if (nu) nu.textContent = d.net_up + ' KB/s';
+        try {
+            const dr = await fetch(SERVER + '/api/device/status', {signal: AbortSignal.timeout(3000)});
+            const ds = await dr.json();
+            const ddot = document.getElementById('DEV_STATUS_DOT');
+            const dtxt = document.getElementById('DEV_STATUS_TXT');
+            if (ddot) ddot.className = 'status-dot ' + (ds.online ? 'online' : 'offline');
+            if (dtxt) dtxt.textContent = ds.online ? (ds.label === 'local' ? 'PC LOCAL' : 'PC ONLINE') : 'PC OFFLINE';
+        } catch (e) {}
         // Security stats
         if (d.sec_stats) {
             setEl('M_OK', d.sec_stats.ok);

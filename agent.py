@@ -72,7 +72,13 @@ def execute_tool(name: str, args: dict, ctx: dict | None = None) -> str:
     mode = ctx.get("execution_mode") or EXECUTION_MODE
     if tool.where == "device":
         if mode != "local":
-            return json.dumps({"ok": False, "error": "remote_not_implemented"})
+            from devices.gateway import call_device
+            device_id = ctx.get("device_id") or DEVICE_ID
+            result = call_device(device_id, name, args or {})
+            with _last_action_lock:
+                if result.get("ok"):
+                    _last_action_registry[sig] = time.time()
+            return truncate_tool_result(result)
         fn = tool.local_impl
     else:
         fn = tool.handler
@@ -116,11 +122,22 @@ def _run_agent_inner(user_input: str, session_id: str, max_steps: int, ctx: dict
     ctx.setdefault("device_id", DEVICE_ID)
     ctx.setdefault("confirmed", False)
     device_online = ctx.get("device_online")
+    device_id = ctx.get("device_id") or DEVICE_ID
     if device_online is None:
-        device_online = ctx["execution_mode"] == "local"
+        if ctx["execution_mode"] == "local":
+            device_online = True
+        else:
+            from devices.gateway import is_online
+            device_online = is_online(device_id)
 
-    schemas = llm_schemas(device_online=bool(device_online))
+    schemas = llm_schemas(device_online=bool(device_online), device_id=device_id)
     sys_prompt = AGENT_SYS_BASE + "\n" + build_jarvis_context()
+    if ctx["execution_mode"] == "remote" and not device_online:
+        sys_prompt += (
+            "\nDEVICE STATUS: the paired PC is offline (device_offline). "
+            "If the user asks to control the computer, explain politely that it is not connected. "
+            "Do not claim you opened apps or ran local actions."
+        )
 
     history = load_recent_messages(session_id, limit=10)
     messages = [{"role": "system", "content": sys_prompt}]

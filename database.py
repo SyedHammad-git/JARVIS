@@ -155,6 +155,16 @@ CREATE TABLE IF NOT EXISTS monitor_log (
     alert_sent   INTEGER DEFAULT 0,
     timestamp    TEXT    NOT NULL
 );
+
+-- Paired Electron / fake devices (token stored as sha256 hex only)
+CREATE TABLE IF NOT EXISTS devices (
+    device_id  TEXT PRIMARY KEY,
+    name       TEXT    NOT NULL DEFAULT 'PC',
+    token_hash TEXT    NOT NULL,
+    revoked    INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT    NOT NULL,
+    last_seen  TEXT    DEFAULT ''
+);
 """
 
 db_lock: Lock = Lock()
@@ -171,12 +181,99 @@ def _sqlite_connect() -> sqlite3.Connection:
     return conn
 
 
+# ── columns that MUST exist per table (name, sql_type, default_expr) ────────
+# Only the columns that legacy DBs are known to be missing are listed here.
+# New columns added to _SCHEMA later should be added here too.
+# SQLite ADD COLUMN only allows a constant default (not datetime()).
+# Empty/zero defaults are backfilled immediately after ALTER below.
+_REQUIRED_COLUMNS: dict[str, list[tuple]] = {
+    "events":       [("created_at", "TEXT",    "''")],
+    "command_log":  [("created_at", "TEXT",    "''"),
+                     ("result",     "TEXT",    "''"),
+                     ("blocked",    "INTEGER", "0"),
+                     ("remote",     "INTEGER", "0")],
+    "conversations":[("created_at", "TEXT",    "''"),
+                     ("tools_used", "TEXT",    "''"),
+                     ("ai_model",   "TEXT",    "'groq'")],
+    "notes":        [("created_at", "TEXT",    "''"),
+                     ("updated_at", "TEXT",    "''")],
+    "config":       [("updated_at", "TEXT",    "''")],
+    "memory_facts": [("created_at", "TEXT",    "''"),
+                     ("last_used",  "TEXT",    "''")],
+    "heartbeat_log":[("created_at", "TEXT",    "''")],
+    "alarms":       [("created_at", "TEXT",    "''")],
+}
+
+# legacy column names that may hold timestamp data in old DBs
+_LEGACY_TS_COLS = ("timestamp", "ts", "time", "created", "date")
+
+
+def _sqlite_migrate(conn: sqlite3.Connection) -> None:
+    """
+    Idempotent schema migration: adds any missing columns to existing tables.
+    Uses PRAGMA table_info — never drops or renames anything.
+    Called from _sqlite_init() under db_lock, BEFORE returning to the caller.
+    """
+    for table, required in _REQUIRED_COLUMNS.items():
+        # Skip if table doesn't exist yet (new install — _SCHEMA creates it)
+        cur = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (table,)
+        )
+        if cur.fetchone() is None:
+            continue
+
+        existing = {
+            row["name"]: row
+            for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+
+        for col_name, col_type, col_default in required:
+            if col_name in existing:
+                continue   # already present — idempotent
+
+            # ADD COLUMN
+            ddl = (
+                f"ALTER TABLE {table} "
+                f"ADD COLUMN {col_name} {col_type} "
+                f"DEFAULT {col_default}"
+            )
+            conn.execute(ddl)
+            log.warning(
+                "[DB MIGRATE] ALTER TABLE %s ADD COLUMN %s %s DEFAULT %s",
+                table, col_name, col_type, col_default
+            )
+
+            # Backfill created_at / updated_at from any legacy timestamp column
+            if col_name in ("created_at", "updated_at"):
+                for legacy in _LEGACY_TS_COLS:
+                    if legacy in existing:
+                        conn.execute(
+                            f"UPDATE {table} SET {col_name} = {legacy} "
+                            f"WHERE {col_name} IS NULL OR {col_name} = ''"
+                        )
+                        log.warning(
+                            "[DB MIGRATE] Backfilled %s.%s from legacy column '%s'",
+                            table, col_name, legacy
+                        )
+                        break
+                else:
+                    # No legacy column found — use current time
+                    conn.execute(
+                        f"UPDATE {table} SET {col_name} = datetime('now','localtime') "
+                        f"WHERE {col_name} IS NULL OR {col_name} = ''"
+                    )
+
+    conn.commit()
+
+
 def _sqlite_init() -> None:
     with db_lock:
         conn = _sqlite_connect()
         try:
             conn.executescript(_SCHEMA)
             conn.commit()
+            _sqlite_migrate(conn)   # add missing columns to existing DBs
             log.info("SQLite ready: %s", DB_PATH)
             print(f"[DB] ✅ SQLite ready: {DB_PATH}")
         finally:
@@ -272,8 +369,20 @@ def _postgres_init() -> None:
                 "WHERE table_schema = 'public';"
             )
             count = cur.fetchone()[0]
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS devices (
+                    device_id  TEXT PRIMARY KEY,
+                    name       TEXT    NOT NULL DEFAULT 'PC',
+                    token_hash TEXT    NOT NULL,
+                    revoked    INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT    NOT NULL,
+                    last_seen  TEXT    DEFAULT ''
+                )
+                """
+            )
         conn.commit()
-        print(f"[DB] ✅ PostgreSQL ready — Supabase connected ({count} tables found)")
+        print(f"[DB] ✅ PostgreSQL ready — {count} tables found")
         log.info("PostgreSQL ready — %d tables", count)
     except Exception as exc:
         print(f"[DB] ❌ PostgreSQL connection FAILED: {exc}")

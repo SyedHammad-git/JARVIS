@@ -205,6 +205,8 @@ def mobile_login():
     data = request.get_json(silent=True) or {}
     pin  = (data.get("pin") or "").strip()
     if verify_pin(pin):
+        from flask import session
+        session["jarvis_authed"] = True
         token = hashlib.sha256(
             f"jarvis-{pin}-{int(time.time()//3600)}".encode()
         ).hexdigest()[:32]

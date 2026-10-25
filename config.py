@@ -15,6 +15,7 @@ log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 _EXEC_RAW = os.environ.get("EXECUTION_MODE", "local").lower().strip()
 EXECUTION_MODE = _EXEC_RAW if _EXEC_RAW in ("local", "remote") else "local"
 DEVICE_ID = os.environ.get("DEVICE_ID", "pc-primary").strip() or "pc-primary"
+DEVICE_GATEWAY = os.environ.get("DEVICE_GATEWAY", "on").lower().strip() != "off"
 
 # ── Optional dependencies ──────────────────────────────────────────
 try:

@@ -7,6 +7,10 @@
 flask>=3.0.0
 flask-cors>=4.0.0
 python-dotenv>=1.0.0
+waitress>=3.0.0           # HTTP-only fallback when DEVICE_GATEWAY=off (not WebSocket-capable)
+flask-socketio>=5.3.6
+simple-websocket>=1.0.0
+python-socketio>=5.11.0   # server dep + tools_dev/fake_device.py client
 
 # ── AI & HTTP ──────────────────────────────────────────────────────
 requests>=2.31.0

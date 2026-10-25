@@ -42,8 +42,18 @@ def get_tool(name: str) -> Optional[Tool]:
     return REGISTRY.get(name)
 
 
-def llm_schemas(device_online: bool) -> list:
+def llm_schemas(device_online: bool | None = None, device_id: str | None = None) -> list:
     """OpenAI-style tool schemas. Device tools are omitted when offline."""
+    if device_online is None:
+        try:
+            from config import DEVICE_ID, EXECUTION_MODE
+            if EXECUTION_MODE == "local":
+                device_online = True
+            else:
+                from devices.gateway import is_online
+                device_online = is_online(device_id or DEVICE_ID)
+        except Exception:
+            device_online = False
     schemas = []
     for tool in REGISTRY.values():
         if tool.where == "device" and not device_online:
