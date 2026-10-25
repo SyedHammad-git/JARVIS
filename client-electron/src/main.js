@@ -10,7 +10,10 @@ const { createCommandHandler, createExecutor, HIGH_RISK_ACTIONS } = require('./e
 const { createRevocationMonitor } = require('./revocation');
 const { createStore, validateConfig } = require('./store');
 
-if (!app.requestSingleInstanceLock()) app.quit();
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+}
 
 const store = createStore({ app, safeStorage });
 const audit = createAudit({ app });
