@@ -52,7 +52,40 @@ The backend's `backend-cloud/.env.example` has the backend-only variable names a
 
 The backend API must be deployed before enabling the dashboard. Check `GET /api/health` for availability, then verify the new Clerk-authenticated `/api/keys` and `/api/devices` endpoints from the dashboard.
 
-For local development, include the local landing origin (normally `http://localhost:3000`) in `CORS_ORIGINS` and use a Clerk development instance. Clerk `azp` values must match one of the configured CORS origins.
+### Backend environment variables
+
+Configure these in the backend hosting provider's secret manager, not in Vercel:
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `CLERK_ISSUER` | Yes | HTTPS issuer expected in Clerk session JWTs. |
+| `CLERK_JWKS_URL` | Yes | HTTPS JWKS endpoint; retrieval has a short timeout and cached signing keys. |
+| `CLERK_AUTHORIZED_PARTIES` | Yes in production | Comma-separated exact allowed `azp` values. Keep this separate from the CORS allowlist. |
+| `API_KEY_ENCRYPTION_KEY` | Yes | Primary Fernet key used to encrypt provider keys at rest. |
+| `API_KEY_ENCRYPTION_KEY_OLD` | Only during rotation | Previous Fernet key, accepted for decryption until the rotation completes. |
+| `CORS_ORIGINS` | Yes in production | Comma-separated browser origins allowed by Flask CORS. Never use `*`. |
+| `SERVER_FALLBACK_KEYS` | No; off by default | Set only to `1` to opt into server-wide provider-key fallback. Startup logs a prominent warning when enabled. |
+| `JARVIS_ENV` | Production | Set to `production` to enforce production configuration and disable server-key use in ownerless background work. |
+| `AUTH_ENABLED` | Yes in production | Must be enabled. |
+| `FLASK_SECRET` | Yes in production | Strong random session-signing secret. |
+| `DATABASE_URL` | Yes in production | Persistent PostgreSQL connection URL. |
+| `DATABASE_URL_DIRECT` | Only for direct migration tools | Direct PostgreSQL endpoint for maintenance scripts; do not use a pooled endpoint. |
+| `DB_BACKEND` | Optional | Select the database backend; production deployments should use PostgreSQL. |
+| `TRUSTED_PROXY_HOPS` | Optional | Number of trusted reverse-proxy hops; configure only when the backend is behind a known proxy. |
+
+For local development, include the local landing origin (normally `http://localhost:3000`) in both `CORS_ORIGINS` and `CLERK_AUTHORIZED_PARTIES`, and use a Clerk development instance. The Clerk `azp` must match an authorized-party entry; CORS origins do not implicitly authorize JWTs.
+
+Provider keys belong to their authenticated user. Authenticated AI requests decrypt only that user's saved keys; ownerless background/system calls do not use server-wide keys in multi-user mode unless the explicit fallback is enabled.
+
+To rotate encryption keys, configure the new primary key and the previous key as `API_KEY_ENCRYPTION_KEY_OLD`, run a dry run, then perform the rotation before removing the old key:
+
+```powershell
+Set-Location backend-cloud
+py -m scripts.rotate_api_keys --dry-run
+py -m scripts.rotate_api_keys
+```
+
+The script reports row counts only and never prints key material.
 
 ## 4. Custom domain and installer
 

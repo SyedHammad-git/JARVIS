@@ -28,3 +28,5 @@ JARVIS_Data/
 
 # ── Node (Electron client — Step 3+) ──────────────────────────────
 node_modules/
+landing/node_modules/
+landing/.next/
