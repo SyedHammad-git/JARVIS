@@ -7,7 +7,7 @@ import logging
 from threading import Lock
 from pathlib import Path
 
-from flask import Blueprint, jsonify, request, send_file
+from flask import Blueprint, jsonify, request, send_from_directory
 
 from config import (
     cache, stat_lock, _server_start,
@@ -30,7 +30,7 @@ from error_utils import api_errors
 
 log  = logging.getLogger("jarvis.routes.core")
 core = Blueprint("core", __name__)
-_base = Path(__file__).parent.parent
+_STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 _DB_HEALTH_CACHE_TTL = 30
 _db_health_cache_lock = Lock()
 _db_health_cache = {"checked_at": 0.0, "backend": None, "payload": None}
@@ -96,12 +96,12 @@ def _pulse() -> dict:
 @core.route("/")
 @api_errors
 def serve_pc():
-    return send_file(str(_base / "JARVIS.html"))
+    return send_from_directory(_STATIC_DIR, "JARVIS.html")
 
 @core.route("/mobile")
 @api_errors
 def serve_mobile():
-    return send_file(str(_base / "mobile.html"))
+    return send_from_directory(_STATIC_DIR, "mobile.html")
 
 
 @core.route("/api/ping")
