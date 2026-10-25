@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,8 @@ log = logging.getLogger("jarvis.backend")
 
 
 def load_environment() -> None:
+    if os.environ.get("JARVIS_SKIP_DOTENV") == "1":
+        return
     backend_dir = Path(__file__).resolve().parents[1]
     load_dotenv(backend_dir / ".env", override=False)
 

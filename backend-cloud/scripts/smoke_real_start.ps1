@@ -8,11 +8,12 @@ $baseUrl = "http://127.0.0.1:$port"
 $logRoot = Join-Path $env:TEMP ("jarvis-smoke-" + [guid]::NewGuid().ToString("N"))
 $stdoutPath = Join-Path $logRoot "stdout.log"
 $stderrPath = Join-Path $logRoot "stderr.log"
+$dataDir = Join-Path $logRoot "data"
 $process = $null
 $failed = $false
 $originalEnvironment = @{}
 
-foreach ($name in @("DB_BACKEND", "JARVIS_HOST", "JARVIS_PORT", "ALLOW_PUBLIC_BIND", "PYTHONUTF8")) {
+foreach ($name in @("DB_BACKEND", "JARVIS_HOST", "JARVIS_PORT", "ALLOW_PUBLIC_BIND", "PYTHONUTF8", "JARVIS_DATA_DIR", "JARVIS_SKIP_DOTENV")) {
     $originalEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
 }
 
@@ -23,6 +24,8 @@ try {
     $env:JARVIS_PORT = "$port"
     $env:ALLOW_PUBLIC_BIND = "0"
     $env:PYTHONUTF8 = "1"
+    $env:JARVIS_DATA_DIR = $dataDir
+    $env:JARVIS_SKIP_DOTENV = "1"
 
     $process = Start-Process -FilePath "py" -ArgumentList @("wsgi.py") `
         -WorkingDirectory $backendDir -PassThru -WindowStyle Hidden `
@@ -70,6 +73,7 @@ finally {
     foreach ($name in $originalEnvironment.Keys) {
         [Environment]::SetEnvironmentVariable($name, $originalEnvironment[$name], "Process")
     }
+    Remove-Item -LiteralPath $logRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 if ($failed) {

@@ -27,7 +27,7 @@ logging.basicConfig(
 log = logging.getLogger("jarvis.db")
 
 HOME     : Path = Path(os.path.expanduser("~"))
-DATA_DIR : Path = HOME / "JARVIS_Data"
+DATA_DIR : Path = Path(os.environ.get("JARVIS_DATA_DIR", HOME / "JARVIS_Data")).expanduser()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH  : Path = DATA_DIR / "jarvis.db"
 

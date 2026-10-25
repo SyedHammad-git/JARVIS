@@ -1,8 +1,11 @@
 import logging
+import os
+from pathlib import Path
 
 import pytest
 
 from app.config import resolve_bind_host
+from app.db import DATA_DIR
 
 
 @pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.168.1.20"])
@@ -26,3 +29,9 @@ def test_default_bind_is_loopback(monkeypatch):
     monkeypatch.delenv("ALLOW_PUBLIC_BIND", raising=False)
 
     assert resolve_bind_host() == "127.0.0.1"
+
+
+def test_backend_tests_skip_dotenv_and_use_temporary_data_dir():
+    assert os.environ["JARVIS_SKIP_DOTENV"] == "1"
+    assert DATA_DIR == Path(os.environ["JARVIS_DATA_DIR"])
+    assert DATA_DIR.name.startswith("jarvis-tests-")

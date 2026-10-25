@@ -10,7 +10,8 @@ ROOT = Path(__file__).resolve().parent.parent
 
 try:
     from dotenv import load_dotenv
-    load_dotenv(ROOT / ".env", override=False)
+    if os.environ.get("JARVIS_SKIP_DOTENV") != "1":
+        load_dotenv(ROOT / ".env", override=False)
 except ImportError:
     pass
 

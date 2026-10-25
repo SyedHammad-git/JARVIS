@@ -20,7 +20,7 @@ from pathlib import Path
 # runs before database.py — and its own startup logging — is imported.)
 from logging.handlers import RotatingFileHandler
 
-_log_dir = Path(os.path.expanduser("~")) / "JARVIS_Data"
+_log_dir = Path(os.environ.get("JARVIS_DATA_DIR", Path(os.path.expanduser("~")) / "JARVIS_Data")).expanduser()
 _log_dir.mkdir(parents=True, exist_ok=True)
 _file_handler = RotatingFileHandler(
     _log_dir / "jarvis.log", maxBytes=5_000_000, backupCount=5, encoding="utf-8"

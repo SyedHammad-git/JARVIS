@@ -13,7 +13,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 from dotenv import load_dotenv
-load_dotenv(str(ROOT / ".env"), override=False)
+if os.environ.get("JARVIS_SKIP_DOTENV") != "1":
+    load_dotenv(str(ROOT / ".env"), override=False)
 
 os.environ.setdefault("DB_BACKEND", "sqlite")
 os.environ.setdefault("DEVICE_GATEWAY", "on")

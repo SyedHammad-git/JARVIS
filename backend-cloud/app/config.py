@@ -60,14 +60,15 @@ GROQ_MODEL = "llama-3.3-70b-versatile"
 
 # ✅ FIX M1: Build Gemini URL dynamically using a function so runtime key changes work
 # and empty keys don't produce malformed ?key= URLs
-def get_gemini_url(pro: bool = False) -> str:
-    key = os.environ.get("GEMINI_KEY", GEMINI_KEY)
-    model = "gemini-1.5-pro" if pro else "gemini-2.0-flash"
+def get_gemini_url(pro: bool = False, key: str | None = None) -> str:
+    if key is None:
+        key = os.environ.get("GEMINI_KEY", GEMINI_KEY)
+    model = "gemini-4-argon" if pro else "gemini-3.8-flash"
     return (f"https://generativelanguage.googleapis.com/v1beta/models/"
             f"{model}:generateContent?key={key}")
 
 OPENROUTER_URL   = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_MODEL = "anthropic/claude-3.5-haiku"
+OPENROUTER_MODEL = "anthropic/claude-haiku-5.5"
 
 # Keep these for backward compat — but callers should prefer get_gemini_url()
 GEMINI_URL     = get_gemini_url(pro=False)

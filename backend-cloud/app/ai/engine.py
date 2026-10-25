@@ -2,10 +2,10 @@
 J.A.R.V.I.S v17.M — Multi-AI Engine
 FIXED: M3 _manager_cache eviction, M4 ai_router_state thread safety, M1 Gemini URL
 """
-import datetime, json, logging, threading, time, uuid
+import datetime, json, logging, re, threading, time, uuid
 
+from app import config as app_config
 from app.config import (
-    GROQ_KEY, GEMINI_KEY, OPENROUTER_KEY,
     GROQ_URL, GROQ_MODEL, OPENROUTER_URL, OPENROUTER_MODEL,
     ai_lock, ai_router_state, ai_router_lock, stat_lock,
     work_session, cache, REQUESTS_OK, _req, get_gemini_url,
@@ -24,9 +24,48 @@ log = logging.getLogger("jarvis.ai")
 # permanent failure and retrying just adds latency for the same result.
 _RETRYABLE_STATUS   = {429, 500, 502, 503, 504}
 _RETRY_BACKOFF_SECS = 1.5
+_URL_QUERY_RE = re.compile(r"(https?://[^\s?#]+)\?[^\s#]+", re.IGNORECASE)
+_CREDENTIAL_RE = re.compile(
+    r"(?i)\b(api[_-]?key|access[_-]?token|token|authorization|password|secret|key)"
+    r"(\s*[:=]\s*)([^\s,;]+)"
+)
+_BEARER_RE = re.compile(r"(?i)\b(bearer)\s+[^\s,;]+")
+_LONG_TOKEN_RE = re.compile(r"\b(?:sk-[A-Za-z0-9_-]{8,}|gsk_[A-Za-z0-9_-]{8,}|AIza[A-Za-z0-9_-]{8,}|[A-Za-z0-9_-]{32,})\b")
+
+
+def _redact_provider_detail(detail) -> str:
+    line = str(detail or "").splitlines()[0][:500]
+    line = _URL_QUERY_RE.sub(r"\1?[REDACTED]", line)
+    line = _CREDENTIAL_RE.sub(r"\1\2[REDACTED]", line)
+    line = _BEARER_RE.sub(r"\1 [REDACTED]", line)
+    return _LONG_TOKEN_RE.sub("[REDACTED]", line)
+
+
+def _response_failure_detail(response) -> str:
+    try:
+        return _redact_provider_detail(response.text)
+    except Exception:
+        return ""
+
+
+def _log_provider_failure(provider: str, *, exception=None, exception_class=None,
+                          status_code=None, detail="") -> None:
+    failure_class = exception_class or (type(exception).__name__ if exception else "HTTPError" if status_code else "ProviderError")
+    if status_code is None and exception is not None:
+        status_code = getattr(getattr(exception, "response", None), "status_code", None)
+    if exception is not None and not detail:
+        detail = str(exception)
+    safe_detail = _redact_provider_detail(detail)
+    log.warning(
+        "provider_failure provider=%s exception_class=%s http_status=%s detail=%s",
+        provider,
+        failure_class,
+        status_code if status_code is not None else "none",
+        safe_detail or "no details",
+    )
 
 def _post_with_retry(url, headers=None, json=None, timeout=30, retries=1,
-                     backoff=_RETRY_BACKOFF_SECS):
+                     backoff=_RETRY_BACKOFF_SECS, provider="unknown"):
     """POST via _req, retrying `retries` time(s) on transient failures only."""
     last_exc = None
     resp = None
@@ -35,14 +74,18 @@ def _post_with_retry(url, headers=None, json=None, timeout=30, retries=1,
             resp = _req.post(url, headers=headers, json=json, timeout=timeout)
             if resp.status_code not in _RETRYABLE_STATUS or attempt == retries:
                 return resp
-            log.warning("Transient HTTP %s from %s — retry %d/%d in %.1fs",
-                        resp.status_code, url, attempt + 1, retries, backoff)
+            _log_provider_failure(
+                provider, status_code=resp.status_code,
+                detail=_response_failure_detail(resp),
+            )
         except Exception as e:
             last_exc = e
             if attempt == retries:
                 raise
-            log.warning("Transient error calling %s (%s) — retry %d/%d in %.1fs",
-                        url, e, attempt + 1, retries, backoff)
+            _log_provider_failure(
+                provider, exception=e,
+                detail=f"transient {type(e).__name__}; retry {attempt + 1}/{retries}: {e}",
+            )
         time.sleep(backoff)
     if last_exc:
         raise last_exc
@@ -102,16 +145,18 @@ def build_jarvis_context() -> str:
 
 # ── AI Provider Callers ───────────────────────────────────────────
 def call_groq(messages: list, tools=None, max_tokens=1024, temperature=0.1) -> dict:
-    if not REQUESTS_OK or not GROQ_KEY:
+    api_key = app_config.GROQ_KEY
+    if not REQUESTS_OK or not api_key:
+        _log_provider_failure("groq", exception_class="ConfigurationError", detail="provider unavailable or key not configured")
         return {"ok": False, "error": "Groq not configured"}
     try:
         payload = {"model": GROQ_MODEL, "messages": messages,
                    "max_tokens": max_tokens, "temperature": temperature}
         if tools: payload["tools"] = tools; payload["tool_choice"] = "auto"
         resp = _post_with_retry(GROQ_URL,
-                         headers={"Authorization": f"Bearer {GROQ_KEY}",
+                 headers={"Authorization": f"Bearer {api_key}",
                                   "Content-Type": "application/json"},
-                         json=payload, timeout=35)
+                 json=payload, timeout=35, provider="groq")
         if resp.status_code == 200:
             with ai_router_lock:
                 ai_router_state["groq_ok"] = True
@@ -120,11 +165,13 @@ def call_groq(messages: list, tools=None, max_tokens=1024, temperature=0.1) -> d
         with ai_router_lock:
             ai_router_state["groq_ok"] = False
             _bump_groq_fail_streak()
+        _log_provider_failure("groq", status_code=resp.status_code, detail=_response_failure_detail(resp))
         return {"ok": False, "error": f"Groq HTTP {resp.status_code}"}
     except Exception as e:
         with ai_router_lock:
             ai_router_state["groq_ok"] = False
             _bump_groq_fail_streak()
+        _log_provider_failure("groq", exception=e)
         return {"ok": False, "error": str(e)}
 
 def _bump_groq_fail_streak():
@@ -150,37 +197,43 @@ def groq_available() -> bool:
     Groq again to give it a chance to reset the flag. The cooldown expiring
     is what grants that one retry chance; if it fails, _bump_groq_fail_streak
     just re-opens the cooldown for another GROQ_COOLDOWN_SECS."""
-    if not GROQ_KEY:
+    if not app_config.GROQ_KEY:
         return False
     with ai_router_lock:
         return time.time() >= ai_router_state.get("groq_cooldown_until", 0)
 
 def call_gemini(prompt: str, image_base64: str = None) -> dict:
-    if not REQUESTS_OK or not GEMINI_KEY:
+    api_key = app_config.GEMINI_KEY
+    if not REQUESTS_OK or not api_key:
+        _log_provider_failure("gemini", exception_class="ConfigurationError", detail="provider unavailable or key not configured")
         return {"ok": False, "error": "Gemini not configured"}
     try:
         # ✅ FIX M1: Use runtime URL builder so key changes are picked up
-        url   = get_gemini_url(pro=False)
+        url   = get_gemini_url(pro=False, key=api_key)
         parts = [{"text": prompt}]
         if image_base64:
             parts.insert(0, {"inline_data": {"mime_type": "image/jpeg", "data": image_base64}})
         payload = {"contents": [{"parts": parts}],
                    "generationConfig": {"maxOutputTokens": 1024, "temperature": 0.1}}
         resp = _post_with_retry(url, json=payload,
-                         headers={"Content-Type": "application/json"}, timeout=30)
+                         headers={"Content-Type": "application/json"}, timeout=30, provider="gemini")
         if resp.status_code == 200:
             with ai_router_lock: ai_router_state["gemini_ok"] = True
             text = (resp.json().get("candidates", [{}])[0]
                     .get("content", {}).get("parts", [{}])[0].get("text", ""))
             return {"ok": True, "text": text}
         with ai_router_lock: ai_router_state["gemini_ok"] = False
+        _log_provider_failure("gemini", status_code=resp.status_code, detail=_response_failure_detail(resp))
         return {"ok": False, "error": f"Gemini HTTP {resp.status_code}"}
     except Exception as e:
         with ai_router_lock: ai_router_state["gemini_ok"] = False
+        _log_provider_failure("gemini", exception=e)
         return {"ok": False, "error": str(e)}
 
 def call_openrouter(messages: list, tools=None, max_tokens=1024) -> dict:
-    if not REQUESTS_OK or not OPENROUTER_KEY:
+    api_key = app_config.OPENROUTER_KEY
+    if not REQUESTS_OK or not api_key:
+        _log_provider_failure("openrouter", exception_class="ConfigurationError", detail="provider unavailable or key not configured")
         return {"ok": False, "error": "OpenRouter not configured"}
     try:
         payload = {"model": OPENROUTER_MODEL, "messages": messages,
@@ -189,19 +242,21 @@ def call_openrouter(messages: list, tools=None, max_tokens=1024) -> dict:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
         resp = _post_with_retry(OPENROUTER_URL,
-                         headers={"Authorization": f"Bearer {OPENROUTER_KEY}",
+                         headers={"Authorization": f"Bearer {api_key}",
                                   "Content-Type": "application/json",
                                   "HTTP-Referer": "https://jarvis.local",
                                   "X-Title": "JARVIS"},
                          json=payload,
-                         timeout=35)
+                         timeout=35, provider="openrouter")
         if resp.status_code == 200:
             with ai_router_lock: ai_router_state["openrouter_ok"] = True
             return {"ok": True, "data": resp.json()}
         with ai_router_lock: ai_router_state["openrouter_ok"] = False
+        _log_provider_failure("openrouter", status_code=resp.status_code, detail=_response_failure_detail(resp))
         return {"ok": False, "error": f"OpenRouter HTTP {resp.status_code}"}
     except Exception as e:
         with ai_router_lock: ai_router_state["openrouter_ok"] = False
+        _log_provider_failure("openrouter", exception=e)
         return {"ok": False, "error": str(e)}
 
 # ── Provider adapter: one normalized function-calling shape ───────
@@ -343,11 +398,13 @@ def openai_history_to_gemini(messages: list, tools=None):
 
 
 def call_gemini_chat(contents, tools=None, system=None, max_tokens=1024) -> dict:
-    if not REQUESTS_OK or not GEMINI_KEY:
+    api_key = app_config.GEMINI_KEY
+    if not REQUESTS_OK or not api_key:
+        _log_provider_failure("gemini", exception_class="ConfigurationError", detail="provider unavailable or key not configured")
         return {"ok": False, "error": "Gemini not configured", "text": "",
                 "tool_calls": [], "raw_assistant_message": None}
     try:
-        url = get_gemini_url(pro=False)
+        url = get_gemini_url(pro=False, key=api_key)
         payload = {
             "contents": contents,
             "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.1},
@@ -357,20 +414,23 @@ def call_gemini_chat(contents, tools=None, system=None, max_tokens=1024) -> dict
         if tools:
             payload["tools"] = tools
         resp = _post_with_retry(url, json=payload,
-                                headers={"Content-Type": "application/json"}, timeout=35)
+                                headers={"Content-Type": "application/json"}, timeout=35,
+                                provider="gemini")
         if resp.status_code == 200:
             with ai_router_lock:
                 ai_router_state["gemini_ok"] = True
             norm = normalize_gemini_generate_content(resp.json())
-            norm["model"] = "gemini-2.0-flash"
+            norm["model"] = "gemini-3.8-flash"
             return norm
         with ai_router_lock:
             ai_router_state["gemini_ok"] = False
+        _log_provider_failure("gemini", status_code=resp.status_code, detail=_response_failure_detail(resp))
         return {"ok": False, "error": f"Gemini HTTP {resp.status_code}",
                 "text": "", "tool_calls": [], "raw_assistant_message": None}
     except Exception as e:
         with ai_router_lock:
             ai_router_state["gemini_ok"] = False
+        _log_provider_failure("gemini", exception=e)
         return {"ok": False, "error": str(e), "text": "",
                 "tool_calls": [], "raw_assistant_message": None}
 
@@ -401,9 +461,9 @@ def chat(messages: list, tools=None, max_tokens=1024, temperature=0.1) -> dict:
             return norm
         with ai_router_lock:
             ai_router_state["fail_count"] += 1
-        log.warning("chat(): Groq failed (%s) — OpenRouter", result.get("error"))
+        log.warning("chat(): Groq failed; trying OpenRouter")
 
-    if OPENROUTER_KEY:
+    if app_config.OPENROUTER_KEY:
         result = call_openrouter(messages, tools=tools, max_tokens=max_tokens)
         if result.get("ok"):
             with ai_router_lock:
@@ -413,9 +473,9 @@ def chat(messages: list, tools=None, max_tokens=1024, temperature=0.1) -> dict:
             norm = normalize_openai_chat_completion(result["data"])
             norm["model"] = "openrouter/claude-haiku"
             return norm
-        log.warning("chat(): OpenRouter failed (%s) — Gemini", result.get("error"))
+        log.warning("chat(): OpenRouter failed; trying Gemini")
 
-    if GEMINI_KEY:
+    if app_config.GEMINI_KEY:
         contents, g_tools, sys_inst = openai_history_to_gemini(messages, tools)
         result = call_gemini_chat(contents, tools=g_tools, system=sys_inst, max_tokens=max_tokens)
         if result.get("ok"):
@@ -424,7 +484,7 @@ def chat(messages: list, tools=None, max_tokens=1024, temperature=0.1) -> dict:
                 ai_router_state["last_switch"] = ts()
                 ai_router_state["switch_reason"] = "Groq/OpenRouter unavailable"
             return result
-        log.warning("chat(): Gemini failed (%s)", result.get("error"))
+        log.warning("chat(): Gemini failed")
 
     return _empty_chat(
         "all_providers_unavailable",
@@ -453,7 +513,7 @@ def _evict_cache():
 
 def groq_as_manager(trigger: str, worker_output: str,
                     max_tokens: int = 100, context: str = "") -> str:
-    if not GROQ_KEY or not REQUESTS_OK:
+    if not app_config.GROQ_KEY or not REQUESTS_OK:
         return worker_output
 
     cache_key = f"{trigger}:{worker_output[:60]}"
@@ -513,7 +573,7 @@ def _route_inner(messages: list, tools=None, task_type="chat") -> tuple:
         result = call_gemini(prompt)
         if result["ok"]:
             with ai_router_lock: ai_router_state["active"] = "gemini"
-            return result["text"], "gemini-2.0-flash", steps
+            return result["text"], "gemini-3.8-flash", steps
 
     if groq_available():
         result = call_groq(messages, tools=tools)
@@ -524,7 +584,7 @@ def _route_inner(messages: list, tools=None, task_type="chat") -> tuple:
         with ai_router_lock: ai_router_state["fail_count"] += 1
         log.warning("Groq failed: %s — trying OpenRouter", result.get("error"))
 
-    if OPENROUTER_KEY:
+    if app_config.OPENROUTER_KEY:
         result = call_openrouter(messages)
         if result["ok"]:
             with ai_router_lock:
@@ -538,7 +598,7 @@ def _route_inner(messages: list, tools=None, task_type="chat") -> tuple:
                 return summary, "groq/manager←openrouter", steps
             return raw, "openrouter/claude-haiku", steps
 
-    if GEMINI_KEY:
+    if app_config.GEMINI_KEY:
         prompt = "\n".join(m.get("content", "") for m in messages[-3:]
                            if isinstance(m.get("content"), str))
         result = call_gemini(prompt)
@@ -549,6 +609,6 @@ def _route_inner(messages: list, tools=None, task_type="chat") -> tuple:
                 summary = groq_as_manager("gemini_worker", raw, max_tokens=200,
                                           context="Gemini completed this task. Relay as JARVIS.")
                 return summary, "groq/manager←gemini", steps
-            return raw, "gemini-2.0-flash", steps
+            return raw, "gemini-3.8-flash", steps
 
     return "All AI engines unavailable, Sir. Please check API keys in .env.", "none", steps
