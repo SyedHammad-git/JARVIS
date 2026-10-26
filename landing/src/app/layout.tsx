@@ -8,7 +8,7 @@ export const metadata: Metadata = {
     default: "J.A.R.V.I.S. — Your desktop, within reach",
     template: "%s | J.A.R.V.I.S.",
   },
-  description: "A private, multi-model assistant for your Windows PC, accessible from your phone.",
+  description: "A personal AI dashboard that connects to your own provider key and a paired Windows desktop client.",
   manifest: "/manifest.webmanifest",
   appleWebApp: { capable: true, title: "JARVIS", statusBarStyle: "black-translucent" },
   icons: {
@@ -21,7 +21,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: [{ media: "(prefers-color-scheme: dark)", color: "#07111f" }, { media: "(prefers-color-scheme: light)", color: "#f5f8fc" }],
+  themeColor: "#F5F9FF",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

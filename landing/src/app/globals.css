@@ -1,32 +1,20 @@
 @import "tailwindcss";
 
 :root {
-  color-scheme: dark light;
-  --page: #07111f;
-  --panel: #0d1b2c;
-  --panel-raised: #12243a;
-  --ink: #e8f0fa;
-  --muted: #a8b8ca;
-  --line: #284058;
-  --accent: #6ce5f3;
-  --accent-ink: #03141a;
-  --success: #a7f3d0;
-  --danger: #fda4af;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    --page: #f5f8fc;
-    --panel: #ffffff;
-    --panel-raised: #edf4fa;
-    --ink: #102033;
-    --muted: #4f6175;
-    --line: #c9d6e2;
-    --accent: #006b7b;
-    --accent-ink: #ffffff;
-    --success: #086b45;
-    --danger: #a51f39;
-  }
+  color-scheme: light;
+  --page: #f5f9ff;
+  --panel: #ffffff;
+  --panel-raised: #edf4fc;
+  --ink: #071b35;
+  --muted: #52657c;
+  --line: #dce7f5;
+  --accent: #0878f9;
+  --accent-hover: #0662cc;
+  --accent-ink: #ffffff;
+  --navy: #06182b;
+  --slate: #10233f;
+  --success: #087443;
+  --danger: #a51f39;
 }
 
 * {
@@ -36,16 +24,18 @@
 html {
   background: var(--page);
   scroll-behavior: smooth;
+  scroll-padding-top: 1rem;
 }
 
 body {
   min-height: 100vh;
   margin: 0;
   background:
-    radial-gradient(ellipse at 80% -15%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 40%),
+    radial-gradient(ellipse at 85% 0%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 34%),
     var(--page);
   color: var(--ink);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-rendering: optimizeLegibility;
 }
 
 a {
@@ -85,6 +75,14 @@ textarea {
   background: var(--panel);
 }
 
+.section-kicker {
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
 .field {
   width: 100%;
   border: 1px solid var(--line);
@@ -107,6 +105,12 @@ textarea {
   font-weight: 700;
   text-decoration: none;
   cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+
+.button-primary:hover:not(:disabled) {
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
 }
 
 .button-secondary {
@@ -122,11 +126,28 @@ textarea {
   font-weight: 650;
   text-decoration: none;
   cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+
+.button-secondary:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+  background: color-mix(in srgb, var(--accent) 5%, var(--panel-raised));
 }
 
 button:disabled {
   cursor: wait;
   opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }
 
 .muted {
