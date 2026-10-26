@@ -34,6 +34,12 @@ Open: http://localhost:5000
 Mobile: http://localhost:5000/mobile  
 Health: http://localhost:5000/api/health
 
+From the repository root, `.\dev-all.ps1` starts the Flask backend with SQLite and
+the Next.js landing site in separate PowerShell windows. It waits for backend
+`/api/ping` and the landing site to respond before opening http://localhost:3000.
+Configure the local environment files first; the launcher does not print or
+inspect their contents.
+
 ---
 
 ## Architecture
