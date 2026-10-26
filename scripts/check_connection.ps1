@@ -1,9 +1,28 @@
 $ErrorActionPreference = "Stop"
-
-$repoRoot = Split-Path -Parent $PSScriptRoot
-$landingEnvPath = Join-Path $repoRoot "landing\.env.local"
-$backendEnvPath = Join-Path $repoRoot "backend-cloud\.env"
 $script:failureCount = 0
+
+# Inspect only exported process variables. Never load dotenv files or print configuration values.
+function Get-EnvironmentValue {
+    param([string]$Name)
+    return [Environment]::GetEnvironmentVariable($Name, "Process")
+}
+
+function Get-EnvironmentState {
+    param([string]$Name)
+    if ([string]::IsNullOrWhiteSpace((Get-EnvironmentValue $Name))) {
+        return "EMPTY"
+    }
+    return "set"
+}
+
+function ConvertTo-AbsoluteUri {
+    param([string]$Value)
+    $uri = $null
+    if ([Uri]::TryCreate($Value, [UriKind]::Absolute, [ref]$uri)) {
+        return $uri
+    }
+    return $null
+}
 
 function Write-Check {
     param(
@@ -19,126 +38,108 @@ function Write-Check {
     }
 }
 
-function Read-EnvValues {
-    param(
-        [string]$Path,
-        [string[]]$Names
-    )
-
-    $values = @{}
-    foreach ($name in $Names) {
-        $values[$name] = @{ State = "EMPTY"; Value = "" }
-    }
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        return $values
-    }
-
-    $lines = [System.IO.File]::ReadAllLines($Path)
-    foreach ($name in $Names) {
-        $namePattern = [regex]::Escape($name)
-        $activePattern = "^\s*$namePattern\s*=(.*)$"
-        $commentPattern = "^\s*#\s*$namePattern\s*="
-        foreach ($line in $lines) {
-            if ($line -match $activePattern) {
-                $value = $Matches[1].Trim()
-                if ($value.Length -ge 2 -and
-                    (($value.StartsWith('"') -and $value.EndsWith('"')) -or
-                    ($value.StartsWith("'") -and $value.EndsWith("'")))) {
-                    $value = $value.Substring(1, $value.Length - 2)
-                }
-                if ($value) {
-                    $values[$name] = @{ State = "set"; Value = $value }
-                } else {
-                    $values[$name] = @{ State = "EMPTY"; Value = "" }
-                }
-                break
-            }
-            if ($line -match $commentPattern) {
-                $values[$name] = @{ State = "COMMENTED"; Value = "" }
-            }
-        }
-    }
-    return $values
-}
-
 function Test-ListeningPort {
     param([int]$Port)
     return [bool](Test-NetConnection -ComputerName "127.0.0.1" -Port $Port `
         -InformationLevel Quiet -WarningAction SilentlyContinue)
 }
 
-function Get-FrontendApiDomain {
-    param([string]$PublishableKey)
-
-    $match = [regex]::Match($PublishableKey, '^pk_(?:test|live)_(.+)$')
-    if (-not $match.Success) {
-        return $null
-    }
-    $encoded = $match.Groups[1].Value.TrimEnd('$').Replace('-', '+').Replace('_', '/')
-    $encoded = $encoded.PadRight([int][Math]::Ceiling($encoded.Length / 4.0) * 4, '=')
-    try {
-        $domain = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded)).TrimEnd('$')
-        $parsed = $null
-        if ([Uri]::TryCreate("https://$domain", [UriKind]::Absolute, [ref]$parsed) -and
-            $parsed.Host -eq $domain -and $parsed.IsDefaultPort -and $parsed.AbsolutePath -eq "/") {
-            return $parsed.Host
-        }
-    } catch {
-        return $null
-    }
-    return $null
+$landingSecretNames = @(
+    "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+    "CLERK_SECRET_KEY"
+)
+foreach ($name in $landingSecretNames) {
+    $state = Get-EnvironmentState $name
+    Write-Check "Landing process variable $name" ($state -eq "set") $state
 }
 
-$landing = Read-EnvValues -Path $landingEnvPath -Names @(
-    "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
-    "CLERK_SECRET_KEY",
-    "NEXT_PUBLIC_BACKEND_URL"
-)
-$backend = Read-EnvValues -Path $backendEnvPath -Names @(
-    "AUTH_MODE",
-    "CLERK_ISSUER",
-    "CLERK_JWKS_URL",
-    "CLERK_AUTHORIZED_PARTIES",
-    "CORS_ORIGINS",
+$backendSecretNames = @(
     "API_KEY_ENCRYPTION_KEY",
-    "JARVIS_HOST"
+    "DATABASE_URL",
+    "FLASK_SECRET",
+    "ALLOWED_CLERK_SUBJECTS"
 )
-
-foreach ($name in @(
-    "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
-    "CLERK_SECRET_KEY",
-    "NEXT_PUBLIC_BACKEND_URL"
-)) {
-    $state = $landing[$name].State
-    Write-Check "landing/.env.local $name" ($state -eq "set") $state
+foreach ($name in $backendSecretNames) {
+    $state = Get-EnvironmentState $name
+    Write-Check "Backend process variable $name" ($state -eq "set") $state
 }
-foreach ($name in @(
-    "CLERK_ISSUER",
-    "CLERK_JWKS_URL",
-    "CLERK_AUTHORIZED_PARTIES",
-    "CORS_ORIGINS",
-    "API_KEY_ENCRYPTION_KEY"
-)) {
-    $state = if ($backend[$name].State -eq "set") { "set" } else { "EMPTY" }
-    Write-Check "backend-cloud/.env $name" ($state -eq "set") $state
+
+$authMode = Get-EnvironmentValue "AUTH_MODE"
+$authModeMatches = $authMode -eq "clerk"
+Write-Check "Backend AUTH_MODE=clerk" $authModeMatches `
+    $(if ($authModeMatches) { "configured mode is clerk" } else { "configured mode is not clerk" })
+
+$production = (Get-EnvironmentValue "JARVIS_ENV") -eq "production"
+$fallbackKeys = Get-EnvironmentValue "SERVER_FALLBACK_KEYS"
+Write-Check "SERVER_FALLBACK_KEYS disabled" ($fallbackKeys -ne "1") `
+    $(if ($fallbackKeys -eq "1") { "disable server-wide provider-key fallback" } else { "fallback is off" })
+
+$issuer = ConvertTo-AbsoluteUri (Get-EnvironmentValue "CLERK_ISSUER")
+$jwks = ConvertTo-AbsoluteUri (Get-EnvironmentValue "CLERK_JWKS_URL")
+$clerkUrlsValid = $null -ne $issuer -and $null -ne $jwks -and
+    $issuer.Scheme -eq "https" -and $jwks.Scheme -eq "https" -and
+    $issuer.Host -eq $jwks.Host -and $jwks.AbsolutePath -eq "/.well-known/jwks.json"
+Write-Check "Clerk issuer and JWKS URL shape" ([bool]$clerkUrlsValid) `
+    $(if ($clerkUrlsValid) { "HTTPS endpoints are structurally consistent" } else { "expected matching HTTPS issuer and JWKS endpoints" })
+
+$partyValue = Get-EnvironmentValue "CLERK_AUTHORIZED_PARTIES"
+$parties = @($partyValue -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+$partiesValid = $parties.Count -gt 0
+foreach ($party in $parties) {
+    $partyUri = ConvertTo-AbsoluteUri $party
+    if ($null -eq $partyUri -or $partyUri.Scheme -ne "https" -or
+        $partyUri.AbsolutePath -ne "/" -or $partyUri.Query -or $partyUri.Fragment -or
+        $partyUri.UserInfo -or $party.Contains("*")) {
+        $partiesValid = $false
+    }
 }
-$authModeMatches = $backend.AUTH_MODE.Value -eq "clerk"
-$authModeDetail = if ($authModeMatches) { "configured mode is clerk" } else { "configured mode is not clerk" }
-Write-Check "backend-cloud/.env AUTH_MODE=clerk" $authModeMatches $authModeDetail
+Write-Check "Clerk authorized-party origins" ([bool]$partiesValid) `
+    $(if ($partiesValid) { "explicit HTTPS origins configured" } else { "configure explicit HTTPS origins without wildcards" })
 
-$frontendApiDomain = Get-FrontendApiDomain $landing.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY.Value
-$issuerUri = $null
-$issuerMatches = $frontendApiDomain -and
-    [Uri]::TryCreate($backend.CLERK_ISSUER.Value, [UriKind]::Absolute, [ref]$issuerUri) -and
-    $issuerUri.Scheme -eq "https" -and $issuerUri.Host -eq $frontendApiDomain
-Write-Check "Clerk publishable domain matches CLERK_ISSUER" ([bool]$issuerMatches) `
-    $(if ($frontendApiDomain -and $issuerUri) { "domain comparison completed" } else { "publishable key or issuer is not usable" })
+$corsValue = Get-EnvironmentValue "CORS_ORIGINS"
+$corsOrigins = @($corsValue -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+$corsValid = $corsOrigins.Count -gt 0
+foreach ($origin in $corsOrigins) {
+    $originUri = ConvertTo-AbsoluteUri $origin
+    if ($null -eq $originUri -or $originUri.AbsolutePath -ne "/" -or
+        $originUri.Query -or $originUri.Fragment -or $originUri.UserInfo -or
+        $origin.Contains("*") -or ($production -and $originUri.Scheme -ne "https")) {
+        $corsValid = $false
+    }
+}
+Write-Check "Explicit CORS origins" ([bool]$corsValid) `
+    $(if ($corsValid) { "origin shape is valid" } else { "configure explicit origins; production origins must use HTTPS" })
 
-$jwksStatus = "request unavailable"
+$hostValue = Get-EnvironmentValue "JARVIS_HOST"
+if ([string]::IsNullOrWhiteSpace($hostValue)) {
+    $hostValue = "127.0.0.1"
+}
+$hostAddress = $null
+$loopback = $hostValue -eq "localhost" -or
+    ([System.Net.IPAddress]::TryParse($hostValue, [ref]$hostAddress) -and
+    [System.Net.IPAddress]::IsLoopback($hostAddress))
+Write-Check "JARVIS_HOST loopback" ([bool]$loopback) `
+    $(if ($loopback) { "loopback bind configured" } else { "refusing a non-loopback bind" })
+
+$backendUrlValue = Get-EnvironmentValue "NEXT_PUBLIC_BACKEND_URL"
+$backendUri = ConvertTo-AbsoluteUri $backendUrlValue
+$backendUrlValid = $null -ne $backendUri -and -not $backendUri.UserInfo -and
+    ($backendUri.Scheme -eq "https" -or (
+        -not $production -and $backendUri.Scheme -eq "http" -and (
+            $backendUri.Host -eq "localhost" -or
+            [System.Net.IPAddress]::TryParse($backendUri.Host, [ref]$hostAddress) -and
+            [System.Net.IPAddress]::IsLoopback($hostAddress)
+        )
+    ))
+Write-Check "NEXT_PUBLIC_BACKEND_URL shape" ([bool]$backendUrlValid) `
+    $(if ($backendUrlValid) { "absolute HTTPS URL or development loopback" } else { "configure an HTTPS URL; HTTP is limited to development loopback" })
+
 $jwksPassed = $false
-if ($backend.CLERK_JWKS_URL.Value) {
+$jwksStatus = "SKIP endpoint shape is invalid"
+if ($clerkUrlsValid) {
+    $jwksStatus = "request unavailable"
     try {
-        $jwksResponse = Invoke-WebRequest -Uri $backend.CLERK_JWKS_URL.Value -Method Get `
+        $jwksResponse = Invoke-WebRequest -Uri $jwks.AbsoluteUri -Method Get `
             -TimeoutSec 10 -UseBasicParsing
         $jwksPassed = [int]$jwksResponse.StatusCode -eq 200
         $jwksStatus = "HTTP $([int]$jwksResponse.StatusCode)"
@@ -150,35 +151,21 @@ if ($backend.CLERK_JWKS_URL.Value) {
 }
 Write-Check "Public Clerk JWKS endpoint" $jwksPassed $jwksStatus
 
-$jarvisHost = $backend.JARVIS_HOST.Value
-if (-not $jarvisHost) {
-    $jarvisHost = "127.0.0.1"
-}
-$hostAddress = $null
-$loopback = $jarvisHost -eq "localhost" -or
-    ([System.Net.IPAddress]::TryParse($jarvisHost, [ref]$hostAddress) -and
-    [System.Net.IPAddress]::IsLoopback($hostAddress))
-Write-Check "JARVIS_HOST loopback" ([bool]$loopback) `
-    $(if ($backend.JARVIS_HOST.Value) { "configured host checked" } else { "default loopback applies" })
-
 $backendRunning = Test-ListeningPort 5000
 $landingRunning = Test-ListeningPort 3000
-Write-Check "Port 3000" $landingRunning $(if ($landingRunning) { "listening" } else { "not listening" })
-Write-Check "Port 5000" $backendRunning $(if ($backendRunning) { "listening" } else { "not listening" })
+Write-Check "Local port 3000" $landingRunning $(if ($landingRunning) { "listening" } else { "not listening" })
+Write-Check "Local port 5000" $backendRunning $(if ($backendRunning) { "listening" } else { "not listening" })
 
-$backendUri = $null
-if ($landing.NEXT_PUBLIC_BACKEND_URL.Value) {
-    [void][Uri]::TryCreate($landing.NEXT_PUBLIC_BACKEND_URL.Value, [UriKind]::Absolute, [ref]$backendUri)
+$pingBase = if ($backendUrlValid) {
+    $backendUri.GetLeftPart([UriPartial]::Authority)
+} else {
+    "http://127.0.0.1:5000"
 }
-if (-not $backendUri) {
-    $backendUri = [Uri]"http://127.0.0.1:5000"
-}
-$backendBase = $backendUri.GetLeftPart([UriPartial]::Authority)
 $pingPassed = $false
-$pingDetail = "SKIP backend is not running"
+$pingDetail = "SKIP backend is not listening"
 if ($backendRunning) {
     try {
-        $pingResponse = Invoke-WebRequest -Uri "$backendBase/api/ping" -Method Get `
+        $pingResponse = Invoke-WebRequest -Uri "$pingBase/api/ping" -Method Get `
             -TimeoutSec 5 -UseBasicParsing
         $pingPassed = [int]$pingResponse.StatusCode -eq 200
         $pingDetail = "HTTP $([int]$pingResponse.StatusCode)"
@@ -189,14 +176,14 @@ if ($backendRunning) {
 if ($backendRunning) {
     Write-Check "Backend /api/ping" $pingPassed $pingDetail
 } else {
-    Write-Output "SKIP Backend /api/ping: backend is not running"
+    Write-Output "SKIP Backend /api/ping: backend is not listening"
 }
 
 if ($backendRunning) {
     $preflightPassed = $false
     $preflightDetail = "preflight request failed"
     try {
-        $preflight = Invoke-WebRequest -Uri "$backendBase/api/ping" -Method Options `
+        $preflight = Invoke-WebRequest -Uri "$pingBase/api/ping" -Method Options `
             -Headers @{
                 Origin = "http://localhost:3000"
                 "Access-Control-Request-Method" = "GET"
@@ -211,13 +198,13 @@ if ($backendRunning) {
             $allowedHeaders -match "(?i)authorization" -and
             $allowedHeaders -match "(?i)content-type" -and
             $allowCredentials -eq "true"
-        $preflightDetail = if ($preflightPassed) { "allow-origin, methods, headers, credentials verified" } else { "required CORS headers missing or incorrect" }
+        $preflightDetail = if ($preflightPassed) { "required CORS headers verified" } else { "required CORS headers missing or incorrect" }
     } catch {
         $preflightDetail = "preflight request failed"
     }
     Write-Check "CORS preflight from landing" $preflightPassed $preflightDetail
 } else {
-    Write-Output "SKIP CORS preflight: backend is not running"
+    Write-Output "SKIP CORS preflight: backend is not listening"
 }
 
 if ($script:failureCount -gt 0) {
