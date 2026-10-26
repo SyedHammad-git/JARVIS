@@ -5,9 +5,15 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        ink: "#07111f",
-        cyan: "#6ce5f3",
-        mint: "#a7f3d0",
+        brand: {
+          blue: "#0878F9",
+          "blue-hover": "#0662CC",
+          dark: "#071B35",
+          navy: "#06182B",
+          slate: "#10233F",
+          soft: "#F5F9FF",
+          border: "#DCE7F5",
+        },
       },
     },
   },

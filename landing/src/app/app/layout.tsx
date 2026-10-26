@@ -1,15 +1,17 @@
 import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export default function DashboardLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <div className="site-width min-h-screen pb-12">
-      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--line)] py-5">
-        <Link href="/app" className="text-sm font-bold tracking-[0.2em] text-[var(--ink)] no-underline">J.A.R.V.I.S.</Link>
-        <nav aria-label="Dashboard navigation" className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+      <header className="dashboard-header">
+        <Link href="/app" className="brand-lockup"><span className="brand-mark" aria-hidden="true">J</span><span>J.A.R.V.I.S.</span></Link>
+        <nav aria-label="Dashboard navigation" className="dashboard-nav">
           <Link href="/app">Chat</Link>
           <Link href="/app/devices">Devices</Link>
           <Link href="/app/settings/keys">API keys</Link>
+          <ThemeToggle />
           <UserButton />
         </nav>
       </header>

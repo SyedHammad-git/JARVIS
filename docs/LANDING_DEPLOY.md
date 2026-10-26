@@ -11,6 +11,7 @@ The [landing/.env.example](../landing/.env.example) contains names only. Do not 
 
 | Variable | Vercel value |
 | --- | --- |
+| `NEXT_PUBLIC_SITE_URL` | Canonical HTTPS origin for the deployed landing site (used to resolve Open Graph image URLs) |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Clerk publishable key for the production Clerk instance |
 | `CLERK_SECRET_KEY` | Clerk secret key; server-only, never prefix it with `NEXT_PUBLIC_` |
 | `NEXT_PUBLIC_BACKEND_URL` | Public HTTPS origin for the JARVIS Flask backend, with no trailing slash |
@@ -123,10 +124,12 @@ From `landing/`, run:
 npm install
 npm run lint
 npm test
+npx playwright install chromium
+npm run test:e2e
 npm run build
 ```
 
-The UI smoke tests mock backend calls; use a separate staging backend and Clerk instance for a manual end-to-end verification before promoting a release.
+The browser smoke suite starts Next.js on loopback, mocks backend API responses, and checks the landing sections, theme toggle, Clerk sign-in modal, download availability, and mobile layout. Component tests mock Clerk and backend behavior. Do not submit credentials during smoke tests; use a separate staging backend and Clerk instance for any manual end-to-end verification before promoting a release.
 
 ### Troubleshooting
 
