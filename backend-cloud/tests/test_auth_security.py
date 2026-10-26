@@ -203,6 +203,7 @@ def test_production_clerk_requires_subject_allowlist_unless_explicitly_overridde
 
 def test_production_requires_clerk_auth_unless_explicitly_overridden(monkeypatch, caplog):
     monkeypatch.setenv("JARVIS_ENV", "production")
+    monkeypatch.setenv("DB_BACKEND", "postgres")
     monkeypatch.setenv("AUTH_MODE", "local")
     monkeypatch.delenv("ALLOW_LOCAL_AUTH", raising=False)
     with pytest.raises(RuntimeError, match="AUTH_MODE=clerk"):
@@ -263,6 +264,7 @@ def test_security_headers_and_explicit_cors(monkeypatch):
 
 def test_production_rejects_missing_or_weak_configuration(monkeypatch):
     monkeypatch.setenv("JARVIS_ENV", "production")
+    monkeypatch.setenv("DB_BACKEND", "postgres")
     monkeypatch.setenv("AUTH_MODE", "clerk")
     monkeypatch.setenv("ALLOWED_CLERK_SUBJECTS", "clerk:test-user")
     monkeypatch.setenv("AUTH_ENABLED", "1")
@@ -304,3 +306,21 @@ def test_production_rejects_missing_or_weak_configuration(monkeypatch):
     monkeypatch.setenv("CLERK_JWKS_URL", "https://clerk.example.test/.well-known/jwks.json")
     monkeypatch.setenv("API_KEY_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
     validate_production_config()
+
+
+def test_production_requires_postgres_backend(monkeypatch):
+    monkeypatch.setenv("JARVIS_ENV", "production")
+    monkeypatch.setenv("DB_BACKEND", "sqlite")
+    monkeypatch.setenv("AUTH_MODE", "clerk")
+    monkeypatch.setenv("ALLOWED_CLERK_SUBJECTS", "clerk:test-user")
+    monkeypatch.setenv("AUTH_ENABLED", "1")
+    monkeypatch.setenv("FLASK_SECRET", "strong-test-secret-value-0123456789abcdef")
+    monkeypatch.setenv("CORS_ORIGINS", "https://jarvis.example.test")
+    monkeypatch.setenv("DATABASE_URL", "configured")
+    monkeypatch.setenv("CLERK_ISSUER", "https://clerk.example.test")
+    monkeypatch.setenv("CLERK_JWKS_URL", "https://clerk.example.test/.well-known/jwks.json")
+    monkeypatch.setenv("CLERK_AUTHORIZED_PARTIES", "https://jarvis.example.test")
+    monkeypatch.setenv("API_KEY_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+
+    with pytest.raises(RuntimeError, match="DB_BACKEND=postgres"):
+        validate_production_config()

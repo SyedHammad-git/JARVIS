@@ -76,7 +76,7 @@ Configure these in the backend hosting provider's secret manager, not in Vercel:
 | `FLASK_SECRET` | Yes in production | Strong random session-signing secret. |
 | `DATABASE_URL` | Yes in production | Persistent PostgreSQL connection URL. |
 | `DATABASE_URL_DIRECT` | Only for direct migration tools | Direct PostgreSQL endpoint for maintenance scripts; do not use a pooled endpoint. |
-| `DB_BACKEND` | Optional | Select the database backend; production deployments should use PostgreSQL. |
+| `DB_BACKEND` | `postgres` in production | Select the database backend. Production refuses SQLite and uses Neon/PostgreSQL only. |
 | `TRUSTED_PROXY_HOPS` | Optional | Number of trusted reverse-proxy hops; configure only when the backend is behind a known proxy. |
 
 For local development, include the local landing origin (normally `http://localhost:3000`) in both `CORS_ORIGINS` and `CLERK_AUTHORIZED_PARTIES`, and use a Clerk development instance. The Clerk `azp` must match an authorized-party entry; CORS origins do not implicitly authorize JWTs.

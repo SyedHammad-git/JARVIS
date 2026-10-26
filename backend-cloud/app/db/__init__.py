@@ -33,7 +33,6 @@ DB_PATH  : Path = DATA_DIR / "jarvis.db"
 
 DB_BACKEND: str = os.environ.get("DB_BACKEND", "sqlite").lower().strip()
 SQLITE_FALLBACK_ACTIVE = False
-PG_RECOVERY_INTERVAL_SECONDS = 300
 
 # ════════════════════════════════════════════════════════════════════
 # SCHEMA — shared logical schema; SQLite and Postgres use converted forms
@@ -753,40 +752,6 @@ def _postgres_init() -> None:
         raise
 
 
-def _probe_postgres() -> bool:
-    connection = None
-    try:
-        import psycopg2
-        connection = psycopg2.connect(_pg_dsn(), connect_timeout=5)
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT 1")
-        return True
-    except Exception:
-        return False
-    finally:
-        if connection is not None:
-            try:
-                connection.close()
-            except Exception:
-                pass
-
-
-def _postgres_recovery_worker() -> None:
-    while True:
-        time.sleep(PG_RECOVERY_INTERVAL_SECONDS)
-        if _probe_postgres():
-            log.error("Neon is reachable again; SQLite remains active; no data sync performed")
-            return
-
-
-def _start_postgres_recovery_monitor() -> None:
-    threading.Thread(
-        target=_postgres_recovery_worker,
-        name="NeonRecoveryMonitor",
-        daemon=True,
-    ).start()
-
-
 def _postgres_write(sql: str, params: tuple = ()) -> bool:
     pg_sql = _pg_placeholder(sql)
 
@@ -931,15 +896,23 @@ def init_db() -> None:
     if DB_BACKEND == "sqlite":
         _sqlite_init()
     elif DB_BACKEND == "postgres":
+        SQLITE_FALLBACK_ACTIVE = False
         try:
             _postgres_init()
         except Exception as exc:
+            if os.environ.get("JARVIS_ENV", "development").strip().lower() == "production":
+                log.critical(
+                    "PostgreSQL startup unavailable (%s); production startup is refused",
+                    type(exc).__name__,
+                )
+                raise PostgresUnavailableError(
+                    "PostgreSQL startup failed; SQLite fallback is disabled in production"
+                ) from None
             SQLITE_FALLBACK_ACTIVE = True
             log.error("PostgreSQL unavailable (%s); falling back to SQLite", type(exc).__name__)
             print(f"[DB] ERROR: PostgreSQL unavailable ({type(exc).__name__}); falling back to SQLite")
             DB_BACKEND = "sqlite"
             _sqlite_init()
-            _start_postgres_recovery_monitor()
     else:
         raise ValueError(f"[DB] Unknown DB_BACKEND='{DB_BACKEND}'. Use: sqlite | postgres")
 

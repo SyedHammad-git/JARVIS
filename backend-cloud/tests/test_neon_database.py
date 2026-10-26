@@ -86,13 +86,14 @@ def test_retry_exhaustion_hides_driver_exception_details(monkeypatch):
     assert "do-not-leak" not in str(raised.value)
 
 
-def test_postgres_startup_fallback_is_loud_and_starts_recovery_monitor(monkeypatch, caplog):
-    monitor = Mock()
+def test_development_postgres_startup_fallback_is_loud_without_periodic_probes(monkeypatch, caplog):
     monkeypatch.setattr(database, "DB_BACKEND", "postgres")
     monkeypatch.setattr(database, "SQLITE_FALLBACK_ACTIVE", False)
+    monkeypatch.setenv("JARVIS_ENV", "development")
     monkeypatch.setattr(database, "_postgres_init", Mock(side_effect=database.PostgresUnavailableError()))
     monkeypatch.setattr(database, "_sqlite_init", Mock())
-    monkeypatch.setattr(database, "_start_postgres_recovery_monitor", monitor)
+    probe = Mock(side_effect=AssertionError("idle recovery must not probe Neon"))
+    monkeypatch.setattr(database, "_probe_postgres", probe, raising=False)
 
     with caplog.at_level("ERROR", logger="jarvis.db"):
         database.init_db()
@@ -101,21 +102,23 @@ def test_postgres_startup_fallback_is_loud_and_starts_recovery_monitor(monkeypat
     assert database.SQLITE_FALLBACK_ACTIVE
     assert "PostgreSQL unavailable" in caplog.text
     database._sqlite_init.assert_called_once()
-    monitor.assert_called_once()
+    probe.assert_not_called()
+    assert not hasattr(database, "_postgres_recovery_worker")
 
 
-def test_recovery_worker_checks_every_five_minutes_and_only_logs_success(monkeypatch, caplog):
-    probes = iter((False, False, True))
-    sleeps = []
-    monkeypatch.setattr(database, "_probe_postgres", lambda: next(probes))
-    monkeypatch.setattr(database.time, "sleep", sleeps.append)
+def test_production_postgres_startup_fails_closed_without_sqlite_fallback(monkeypatch):
+    monkeypatch.setattr(database, "DB_BACKEND", "postgres")
+    monkeypatch.setattr(database, "SQLITE_FALLBACK_ACTIVE", False)
+    monkeypatch.setenv("JARVIS_ENV", "production")
+    monkeypatch.setattr(database, "_postgres_init", Mock(side_effect=database.PostgresUnavailableError()))
+    monkeypatch.setattr(database, "_sqlite_init", Mock())
 
-    with caplog.at_level("ERROR", logger="jarvis.db"):
-        database._postgres_recovery_worker()
+    with pytest.raises(database.PostgresUnavailableError, match="SQLite fallback is disabled"):
+        database.init_db()
 
-    assert sleeps == [300, 300, 300]
-    assert caplog.text.count("Neon is reachable again") == 1
-    assert "unavailable" not in caplog.text
+    assert database.DB_BACKEND == "postgres"
+    assert not database.SQLITE_FALLBACK_ACTIVE
+    database._sqlite_init.assert_not_called()
 
 
 def test_postgres_dispatch_does_not_run_sqlite_legacy_adapter(monkeypatch):

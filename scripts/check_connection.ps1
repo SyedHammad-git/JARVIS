@@ -53,23 +53,28 @@ foreach ($name in $landingSecretNames) {
     Write-Check "Landing process variable $name" ($state -eq "set") $state
 }
 
-$backendSecretNames = @(
+$backendRequiredNames = @(
     "API_KEY_ENCRYPTION_KEY",
     "DATABASE_URL",
     "FLASK_SECRET",
     "ALLOWED_CLERK_SUBJECTS"
 )
-foreach ($name in $backendSecretNames) {
+foreach ($name in $backendRequiredNames) {
     $state = Get-EnvironmentState $name
     Write-Check "Backend process variable $name" ($state -eq "set") $state
 }
+
+$production = (Get-EnvironmentValue "JARVIS_ENV") -eq "production"
+$dbBackend = Get-EnvironmentValue "DB_BACKEND"
+$dbBackendValid = if ($production) { $dbBackend -eq "postgres" } else { $dbBackend -in @("sqlite", "postgres") }
+Write-Check "DB_BACKEND" ([bool]$dbBackendValid) `
+    $(if ($dbBackendValid) { "configured backend is valid for this environment" } else { "production requires postgres; local mode allows sqlite or postgres" })
 
 $authMode = Get-EnvironmentValue "AUTH_MODE"
 $authModeMatches = $authMode -eq "clerk"
 Write-Check "Backend AUTH_MODE=clerk" $authModeMatches `
     $(if ($authModeMatches) { "configured mode is clerk" } else { "configured mode is not clerk" })
 
-$production = (Get-EnvironmentValue "JARVIS_ENV") -eq "production"
 $fallbackKeys = Get-EnvironmentValue "SERVER_FALLBACK_KEYS"
 Write-Check "SERVER_FALLBACK_KEYS disabled" ($fallbackKeys -ne "1") `
     $(if ($fallbackKeys -eq "1") { "disable server-wide provider-key fallback" } else { "fallback is off" })

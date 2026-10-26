@@ -136,6 +136,8 @@ def validate_production_config() -> None:
         raise RuntimeError("Production startup refused: CORS_ORIGINS must contain explicit origins")
     if not os.environ.get("DATABASE_URL", "").strip():
         raise RuntimeError("Production startup refused: DATABASE_URL is required")
+    if os.environ.get("DB_BACKEND", "sqlite").strip().lower() != "postgres":
+        raise RuntimeError("Production startup refused: DB_BACKEND=postgres is required")
     if auth_mode == "clerk":
         if (not os.environ.get("CLERK_ISSUER", "").strip()
                 or not os.environ.get("CLERK_JWKS_URL", "").strip()):

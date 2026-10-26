@@ -83,6 +83,12 @@ when applying schema changes. SQLite remains the local fallback.
 ChromaDB has been removed; Neon uses pgvector for semantic memory, with SQL
 keyword search retained whenever embeddings or pgvector are unavailable.
 
+Neon is not probed on a timer, so an idle database can suspend. If PostgreSQL
+is unavailable during local startup, this process falls back to SQLite; restart
+the backend to retry Neon. Production requires `DB_BACKEND=postgres` and refuses
+to start on SQLite if PostgreSQL initialization fails, avoiding writes to a
+process-local database.
+
 ### Per-user data and legacy ownership
 
 Conversations, notes, alarms, memory facts/vectors, monitors and their history,
