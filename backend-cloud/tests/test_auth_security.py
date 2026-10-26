@@ -136,6 +136,7 @@ def test_clerk_mode_rejects_sessions_and_disables_local_login(monkeypatch):
     from app import security
 
     monkeypatch.setenv("AUTH_MODE", "clerk")
+    monkeypatch.setenv("ALLOWED_CLERK_SUBJECTS", "clerk:user-1")
     client = create_app(testing=True).test_client()
     with client.session_transaction() as flask_session:
         flask_session["jarvis_user"] = "local-account"
@@ -146,6 +147,58 @@ def test_clerk_mode_rejects_sessions_and_disables_local_login(monkeypatch):
     monkeypatch.setattr(security, "_verify_clerk_token", lambda _token: "clerk:user-1")
     response = client.get("/api/stats", headers={"Authorization": "Bearer test-token"})
     assert response.status_code == 200
+
+
+def test_clerk_subject_allowlist_allows_listed_user_and_denies_other_user(monkeypatch):
+    from app import security
+
+    monkeypatch.setenv("AUTH_MODE", "clerk")
+    monkeypatch.setenv("ALLOWED_CLERK_SUBJECTS", "clerk:allowed-user")
+    monkeypatch.setattr(
+        security,
+        "_verify_clerk_token",
+        lambda token: {
+            "allowed-token": "clerk:allowed-user",
+            "other-token": "clerk:other-user",
+        }.get(token),
+    )
+    client = create_app(testing=True).test_client()
+
+    allowed = client.get("/api/stats", headers={"Authorization": "Bearer allowed-token"})
+    denied = client.get("/api/stats", headers={"Authorization": "Bearer other-token"})
+
+    assert allowed.status_code == 200
+    assert denied.status_code == 403
+    assert denied.get_json() == {"error": "not_allowed"}
+
+
+def test_empty_clerk_subject_allowlist_warns_in_development(monkeypatch, caplog):
+    from app.security import validate_allowed_clerk_subjects
+
+    monkeypatch.setenv("JARVIS_ENV", "development")
+    monkeypatch.setenv("AUTH_MODE", "clerk")
+    monkeypatch.setenv("ALLOWED_CLERK_SUBJECTS", "")
+    with caplog.at_level("WARNING", logger="jarvis.security"):
+        validate_allowed_clerk_subjects()
+    assert "ALLOWED_CLERK_SUBJECTS is empty" in caplog.text
+
+
+def test_production_clerk_requires_subject_allowlist_unless_explicitly_overridden(monkeypatch):
+    from app.security import validate_allowed_clerk_subjects
+
+    monkeypatch.setenv("JARVIS_ENV", "production")
+    monkeypatch.setenv("AUTH_MODE", "clerk")
+    monkeypatch.setenv("ALLOWED_CLERK_SUBJECTS", "")
+    monkeypatch.delenv("ALLOW_ANY_CLERK_USER", raising=False)
+    with pytest.raises(RuntimeError, match="ALLOWED_CLERK_SUBJECTS"):
+        validate_allowed_clerk_subjects()
+
+    monkeypatch.setenv("ALLOW_ANY_CLERK_USER", "1")
+    validate_allowed_clerk_subjects()
+
+    monkeypatch.delenv("ALLOW_ANY_CLERK_USER", raising=False)
+    with pytest.raises(RuntimeError, match="ALLOWED_CLERK_SUBJECTS"):
+        create_app(testing=True)
 
 
 def test_production_requires_clerk_auth_unless_explicitly_overridden(monkeypatch, caplog):
@@ -211,6 +264,7 @@ def test_security_headers_and_explicit_cors(monkeypatch):
 def test_production_rejects_missing_or_weak_configuration(monkeypatch):
     monkeypatch.setenv("JARVIS_ENV", "production")
     monkeypatch.setenv("AUTH_MODE", "clerk")
+    monkeypatch.setenv("ALLOWED_CLERK_SUBJECTS", "clerk:test-user")
     monkeypatch.setenv("AUTH_ENABLED", "1")
     monkeypatch.setenv("FLASK_SECRET", "weak")
     monkeypatch.setenv("CORS_ORIGINS", "https://jarvis.example.test")

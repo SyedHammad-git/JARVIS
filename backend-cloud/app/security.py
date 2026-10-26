@@ -63,6 +63,31 @@ def configured_authorized_parties() -> list[str]:
     return [party.strip().rstrip("/") for party in raw.split(",") if party.strip()]
 
 
+def configured_allowed_clerk_subjects() -> list[str]:
+    raw = os.environ.get("ALLOWED_CLERK_SUBJECTS", "")
+    return [subject.strip() for subject in raw.split(",") if subject.strip()]
+
+
+def validate_allowed_clerk_subjects() -> None:
+    if configured_auth_mode() != "clerk":
+        return
+    subjects = configured_allowed_clerk_subjects()
+    production = os.environ.get("JARVIS_ENV", "development").strip().lower() == "production"
+    if subjects:
+        return
+    if production and os.environ.get("ALLOW_ANY_CLERK_USER", "").strip() != "1":
+        raise RuntimeError(
+            "Production startup refused: ALLOWED_CLERK_SUBJECTS is required "
+            "unless ALLOW_ANY_CLERK_USER=1"
+        )
+    if production:
+        log.warning("SECURITY WARNING: ALLOW_ANY_CLERK_USER=1 permits every verified Clerk user")
+    else:
+        log.warning(
+            "SECURITY WARNING: ALLOWED_CLERK_SUBJECTS is empty; every verified Clerk user is permitted"
+        )
+
+
 def get_client_ip() -> str:
     return request.remote_addr or "unknown"
 
@@ -91,6 +116,7 @@ def configured_cors_origins() -> list[str]:
 
 
 def validate_production_config() -> None:
+    validate_allowed_clerk_subjects()
     if os.environ.get("JARVIS_ENV", "development").lower() != "production":
         return
     auth_mode = configured_auth_mode()
@@ -152,6 +178,9 @@ def install_api_security(app) -> None:
                 return response
             if not username:
                 return jsonify({"ok": False, "error": "authentication_required"}), 401
+            allowed_subjects = configured_allowed_clerk_subjects()
+            if allowed_subjects and username not in allowed_subjects:
+                return jsonify({"error": "not_allowed"}), 403
             g.current_user = {"username": username, "disabled": 0}
         elif is_bearer:
             return jsonify({"ok": False, "error": "authentication_required"}), 401

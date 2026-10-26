@@ -23,6 +23,7 @@ def _client(monkeypatch, tmp_path, subject="clerk_user_1"):
     monkeypatch.setattr(db, "DB_BACKEND", "sqlite")
     monkeypatch.setenv("DB_BACKEND", "sqlite")
     monkeypatch.setenv("AUTH_MODE", "clerk")
+    monkeypatch.setenv("ALLOWED_CLERK_SUBJECTS", f"clerk:{subject}")
     monkeypatch.setenv("API_KEY_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
     monkeypatch.setenv("CLERK_ISSUER", "https://clerk.example.test")
     monkeypatch.setenv("CLERK_JWKS_URL", "https://clerk.example.test/.well-known/jwks.json")
@@ -81,8 +82,8 @@ def test_user_key_is_encrypted_and_scoped_by_clerk_subject(monkeypatch, tmp_path
 
     monkeypatch.setattr(security, "_verify_clerk_token", lambda _token: "clerk:another_clerk_user")
     other_user = client.get("/api/keys", headers=_headers())
-    other_groq = next(provider for provider in other_user.get_json()["providers"] if provider["provider"] == "groq")
-    assert other_groq["configured"] is False
+    assert other_user.status_code == 403
+    assert other_user.get_json() == {"error": "not_allowed"}
 
 
 def test_missing_key_error_and_one_time_pair_code(monkeypatch, tmp_path):
@@ -193,6 +194,7 @@ def test_clerk_invalid_tokens_return_401(monkeypatch, tmp_path):
 
     base = {"sub": "user-1", "iss": issuer, "azp": origin, "iat": now, "exp": now + 60}
     valid = token_for(base)
+    monkeypatch.setenv("ALLOWED_CLERK_SUBJECTS", "clerk:user-1")
     assert client.get("/api/keys", headers=_headers(valid)).status_code == 200
 
     invalid_tokens = [
@@ -320,8 +322,8 @@ def test_authenticated_users_never_fall_back_to_server_keys(monkeypatch, tmp_pat
 
     monkeypatch.setattr(security, "_verify_clerk_token", lambda _token: "clerk:user-b")
     other_user = client.post("/api/agent", json={"message": "hello"}, headers=_headers())
-    assert other_user.status_code == 400
-    assert other_user.get_json()["error"] == "no_api_key"
+    assert other_user.status_code == 403
+    assert other_user.get_json() == {"error": "not_allowed"}
     assert seen == ["owned-user-key"]
 
 

@@ -38,6 +38,7 @@ The dashboard sends a short-lived Clerk session token in `Authorization: Bearer 
 - `CLERK_ISSUER`: the exact HTTPS issuer in Clerk session JWTs (no trailing slash).
 - `CLERK_JWKS_URL`: the corresponding HTTPS `/.well-known/jwks.json` URL.
 - `AUTH_MODE=clerk`: require Clerk bearer tokens; session cookies and password login are rejected.
+- `ALLOWED_CLERK_SUBJECTS`: comma-separated allowlist of Clerk identities, written exactly as `clerk:<sub>`. Verified users outside the list receive HTTP 403 with `{"error":"not_allowed"}`. Development warns and permits all verified Clerk users when the list is empty; production refuses startup with an empty list unless `ALLOW_ANY_CLERK_USER=1` explicitly allows every verified Clerk user.
 - `API_KEY_ENCRYPTION_KEY`: a persistent Fernet key used only by the backend to encrypt provider keys at rest. Generate a new value with:
 
   ```powershell
@@ -64,6 +65,8 @@ Configure these in the backend hosting provider's secret manager, not in Vercel:
 | `CLERK_ISSUER` | Yes | HTTPS issuer expected in Clerk session JWTs. |
 | `CLERK_JWKS_URL` | Yes | HTTPS JWKS endpoint; retrieval has a short timeout and cached signing keys. |
 | `CLERK_AUTHORIZED_PARTIES` | Yes in production | Comma-separated exact allowed `azp` values. Keep this separate from the CORS allowlist. |
+| `ALLOWED_CLERK_SUBJECTS` | Yes in production | Comma-separated `clerk:<sub>` user allowlist. Empty in development permits all verified Clerk users with a warning. |
+| `ALLOW_ANY_CLERK_USER` | No; default off | Explicit production opt-out from the subject allowlist requirement; permits every verified Clerk user. |
 | `API_KEY_ENCRYPTION_KEY` | Yes | Primary Fernet key used to encrypt provider keys at rest. |
 | `API_KEY_ENCRYPTION_KEY_OLD` | Only during rotation | Previous Fernet key, accepted for decryption until the rotation completes. |
 | `CORS_ORIGINS` | Yes in production | Comma-separated browser origins allowed by Flask CORS. Never use `*`. |
@@ -108,3 +111,8 @@ npm run build
 ```
 
 The UI smoke tests mock backend calls; use a separate staging backend and Clerk instance for a manual end-to-end verification before promoting a release.
+
+### Troubleshooting
+
+- A hydration warning mentioning `bis_skin_checked` is commonly caused by a browser extension injecting attributes into the page. Verify in a clean browser profile or disable the extension; do not change application markup to accommodate injected attributes.
+- The production CSP intentionally uses exact Clerk Frontend API and Cloudflare challenge hosts and does not include Clerk's documented `*.protect.clerk.com` wildcard. This keeps the policy wildcard-free, but Clerk abuse/fraud protection hosts may be blocked; if that feature is required, revisit this tradeoff explicitly.
