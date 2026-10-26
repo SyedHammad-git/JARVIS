@@ -31,6 +31,7 @@
     ],
     "win": {
       "target": "nsis",
+      "artifactName": "JARVIS-Device-Client-Setup-${version}.${ext}",
       "icon": "src/ui/icon.png"
     },
     "nsis": {

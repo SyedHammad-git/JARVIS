@@ -1,0 +1,68 @@
+name: Windows installer
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out selected ref
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client-electron/package-lock.json
+
+      - name: Install client dependencies
+        run: npm ci --prefix client-electron
+
+      - name: Test client
+        run: npm --prefix client-electron test
+
+      - name: Test camera permission behavior
+        run: npm --prefix client-electron run test:camera
+
+      - name: Build unsigned Windows installer
+        run: npm --prefix client-electron run dist -- --publish never
+
+      - name: Generate SHA-256 checksum
+        id: installer
+        shell: pwsh
+        run: |
+          $version = node -p "require('./client-electron/package.json').version"
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "The client package version must be semantic versioning."
+          }
+
+          $releaseDirectory = Join-Path $PWD "client-electron/release"
+          $installers = @(Get-ChildItem -LiteralPath $releaseDirectory -Filter "JARVIS-Device-Client-Setup-$version.exe" -File)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one installer for the package version."
+          }
+
+          $installer = $installers[0]
+          $hash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksumPath = "$($installer.FullName).sha256"
+          [System.IO.File]::WriteAllText(
+            $checksumPath,
+            "$hash  $($installer.Name)`n",
+            [System.Text.Encoding]::ASCII
+          )
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Upload installer and checksum artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-windows-${{ steps.installer.outputs.version }}
+          path: |
+            client-electron/release/JARVIS-Device-Client-Setup-*.exe
+            client-electron/release/JARVIS-Device-Client-Setup-*.exe.sha256
+          if-no-files-found: error
+          retention-days: 30

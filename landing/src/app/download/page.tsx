@@ -15,9 +15,14 @@ function releaseAssetUrl(value: string | undefined): string | undefined {
   }
 }
 
+function releaseChecksum(value: string | undefined): string | undefined {
+  return value && /^[a-f\d]{64}$/i.test(value) ? value : undefined;
+}
+
 const configuredDownloadUrl = process.env.NEXT_PUBLIC_DOWNLOAD_URL;
 const downloadUrl = releaseAssetUrl(configuredDownloadUrl);
-const checksum = process.env.NEXT_PUBLIC_DOWNLOAD_SHA256;
+const configuredChecksum = process.env.NEXT_PUBLIC_DOWNLOAD_SHA256;
+const checksum = releaseChecksum(configuredChecksum);
 
 export default function DownloadPage() {
   return (
@@ -35,6 +40,7 @@ export default function DownloadPage() {
             </Link>
           </div>
           {configuredDownloadUrl && !downloadUrl && <p className="mt-4 text-sm text-rose-500" role="alert">The configured download must be an HTTPS GitHub Release asset URL.</p>}
+          {configuredChecksum && !checksum && <p className="mt-4 text-sm text-rose-500" role="alert">The configured checksum must contain exactly 64 hexadecimal characters.</p>}
           <div className="mt-6 border-t border-[var(--line)] pt-5">
             <h2 className="font-bold">SHA-256 checksum</h2>
             <p className="mt-2 break-all font-mono text-sm" aria-label="SHA-256 checksum">{checksum || "Checksum not published yet."}</p>

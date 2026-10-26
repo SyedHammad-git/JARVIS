@@ -97,7 +97,16 @@ The script reports row counts only and never prints key material.
 
 Add the desired domain in Vercel, follow its DNS verification, and wait for the TLS certificate before updating Clerk allowed origins, `CORS_ORIGINS`, and the backend URL. Keep `NEXT_PUBLIC_BACKEND_URL` on HTTPS; the client refuses plain HTTP in production.
 
-Publish the Windows installer as a GitHub Release asset. Set the download URL and SHA-256 from that same release. The current installer is unsigned and can trigger SmartScreen; the download page explains the warning and checksum verification.
+The Windows installer workflow is manual. Run **Actions → Windows installer → Run workflow** on the release-ready ref. It runs the Electron tests, builds an unsigned NSIS installer, calculates a SHA-256 sidecar, and uploads both as a 30-day Actions artifact. It does not publish a GitHub Release, sign the installer, deploy the app, or require signing secrets.
+
+Download the artifact, verify the installer against its `.sha256` sidecar, then publish both files as assets on the GitHub Release you create. For example, from the folder containing the installer:
+
+```powershell
+(Get-FileHash .\JARVIS-Device-Client-Setup-18.0.0.exe -Algorithm SHA256).Hash
+Get-Content .\JARVIS-Device-Client-Setup-18.0.0.exe.sha256
+```
+
+Compare the two hashes before publishing. Set `NEXT_PUBLIC_DOWNLOAD_URL` to the direct HTTPS GitHub Release asset URL for that installer and `NEXT_PUBLIC_DOWNLOAD_SHA256` to its 64-character hexadecimal hash. The download page rejects non-Release URLs and malformed checksums. The installer is unsigned and can trigger SmartScreen; the download page explains the warning and verification steps.
 
 ## 5. Local checks
 
