@@ -5,6 +5,7 @@ import logging
 import os
 import threading
 from datetime import timedelta
+from urllib.parse import urlsplit
 
 import jwt
 from flask import g, jsonify, request, session
@@ -151,6 +152,22 @@ def validate_production_config() -> None:
             raise RuntimeError("Production startup refused: authorized parties must be explicit HTTPS origins")
     if not os.environ.get("API_KEY_ENCRYPTION_KEY", "").strip():
         raise RuntimeError("Production startup refused: API_KEY_ENCRYPTION_KEY is required")
+    landing_url = os.environ.get("LANDING_URL", "").strip()
+    try:
+        parsed_landing_url = urlsplit(landing_url)
+        landing_url_valid = (
+            parsed_landing_url.scheme == "https"
+            and bool(parsed_landing_url.hostname)
+            and not parsed_landing_url.username
+            and not parsed_landing_url.password
+            and parsed_landing_url.path in ("", "/")
+            and not parsed_landing_url.query
+            and not parsed_landing_url.fragment
+        )
+    except ValueError:
+        landing_url_valid = False
+    if not landing_url_valid:
+        raise RuntimeError("Production startup refused: LANDING_URL must be an absolute HTTPS URL")
 
 
 def install_api_security(app) -> None:

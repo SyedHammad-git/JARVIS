@@ -64,7 +64,13 @@ def create_app(
     configure_proxy(app)
     configure_session(app)
 
-    app.config.update(JSON_SORT_KEYS=False, MAX_CONTENT_LENGTH=32 * 1024 * 1024, TESTING=testing)
+    app.config.update(
+        JSON_SORT_KEYS=False,
+        MAX_CONTENT_LENGTH=32 * 1024 * 1024,
+        TESTING=testing,
+        JARVIS_ENV=os.environ.get("JARVIS_ENV", "development").strip().lower(),
+        LANDING_URL=os.environ.get("LANDING_URL", "").strip(),
+    )
     if bind_host is not None:
         app.config["JARVIS_HOST"] = bind_host
 

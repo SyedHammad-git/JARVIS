@@ -308,6 +308,19 @@ def test_production_rejects_missing_or_weak_configuration(monkeypatch):
     monkeypatch.setenv("CLERK_ISSUER", "https://clerk.example.test")
     monkeypatch.setenv("CLERK_JWKS_URL", "https://clerk.example.test/.well-known/jwks.json")
     monkeypatch.setenv("API_KEY_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.delenv("LANDING_URL", raising=False)
+    with pytest.raises(RuntimeError, match="LANDING_URL"):
+        validate_production_config()
+    monkeypatch.setenv("LANDING_URL", "http://localhost:3000")
+    with pytest.raises(RuntimeError, match="LANDING_URL"):
+        validate_production_config()
+    monkeypatch.setenv("LANDING_URL", "https://jarvis.example.test/nested")
+    with pytest.raises(RuntimeError, match="LANDING_URL"):
+        validate_production_config()
+    monkeypatch.setenv("LANDING_URL", "https://[")
+    with pytest.raises(RuntimeError, match="LANDING_URL"):
+        validate_production_config()
+    monkeypatch.setenv("LANDING_URL", "https://jarvis.example.test")
     validate_production_config()
 
 

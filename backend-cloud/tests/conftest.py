@@ -19,6 +19,7 @@ os.environ["GEMINI_KEY"] = "test-gemini-key"
 os.environ["OPENROUTER_KEY"] = "test-openrouter-key"
 os.environ["WEATHER_KEY"] = "test-weather-key"
 os.environ["FLASK_SECRET"] = "test-only-secret"
+os.environ.setdefault("LANDING_URL", "https://jarvis.example.test")
 
 from app.db import init_db
 

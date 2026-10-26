@@ -7,7 +7,7 @@ import logging
 from threading import Lock
 from pathlib import Path
 
-from flask import Blueprint, g, jsonify, request, send_from_directory
+from flask import Blueprint, current_app, g, jsonify, redirect, request, send_from_directory
 
 from app.config import (
     cache, stat_lock, _server_start,
@@ -101,11 +101,15 @@ def _pulse(owner_username: str = "") -> dict:
 @core.route("/")
 @api_errors
 def serve_pc():
+    if current_app.config.get("JARVIS_ENV") == "production":
+        return redirect(current_app.config["LANDING_URL"], code=302)
     return send_from_directory(_STATIC_DIR, "JARVIS.html")
 
 @core.route("/mobile")
 @api_errors
 def serve_mobile():
+    if current_app.config.get("JARVIS_ENV") == "production":
+        return redirect(current_app.config["LANDING_URL"], code=302)
     return send_from_directory(_STATIC_DIR, "mobile.html")
 
 
