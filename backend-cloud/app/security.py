@@ -138,6 +138,8 @@ def validate_production_config() -> None:
         raise RuntimeError("Production startup refused: DATABASE_URL is required")
     if os.environ.get("DB_BACKEND", "sqlite").strip().lower() != "postgres":
         raise RuntimeError("Production startup refused: DB_BACKEND=postgres is required")
+    if os.environ.get("SERVER_FALLBACK_KEYS", "").strip() == "1":
+        raise RuntimeError("Production startup refused: SERVER_FALLBACK_KEYS must remain disabled")
     if auth_mode == "clerk":
         if (not os.environ.get("CLERK_ISSUER", "").strip()
                 or not os.environ.get("CLERK_JWKS_URL", "").strip()):

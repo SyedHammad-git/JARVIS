@@ -1,5 +1,5 @@
 # ╔══════════════════════════════════════════════════════════════════╗
-# ║  J.A.R.V.I.S v17.M — Python Dependencies                       ║
+# ║  J.A.R.V.I.S v18.0.0 — Python Dependencies                     ║
 # ║  Install: pip install -r requirements.txt                        ║
 # ╚══════════════════════════════════════════════════════════════════╝
 

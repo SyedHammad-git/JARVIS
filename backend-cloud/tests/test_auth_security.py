@@ -188,6 +188,7 @@ def test_production_clerk_requires_subject_allowlist_unless_explicitly_overridde
 
     monkeypatch.setenv("JARVIS_ENV", "production")
     monkeypatch.setenv("AUTH_MODE", "clerk")
+    monkeypatch.delenv("SERVER_FALLBACK_KEYS", raising=False)
     monkeypatch.setenv("ALLOWED_CLERK_SUBJECTS", "")
     monkeypatch.delenv("ALLOW_ANY_CLERK_USER", raising=False)
     with pytest.raises(RuntimeError, match="ALLOWED_CLERK_SUBJECTS"):
@@ -204,6 +205,7 @@ def test_production_clerk_requires_subject_allowlist_unless_explicitly_overridde
 def test_production_requires_clerk_auth_unless_explicitly_overridden(monkeypatch, caplog):
     monkeypatch.setenv("JARVIS_ENV", "production")
     monkeypatch.setenv("DB_BACKEND", "postgres")
+    monkeypatch.delenv("SERVER_FALLBACK_KEYS", raising=False)
     monkeypatch.setenv("AUTH_MODE", "local")
     monkeypatch.delenv("ALLOW_LOCAL_AUTH", raising=False)
     with pytest.raises(RuntimeError, match="AUTH_MODE=clerk"):
@@ -265,6 +267,7 @@ def test_security_headers_and_explicit_cors(monkeypatch):
 def test_production_rejects_missing_or_weak_configuration(monkeypatch):
     monkeypatch.setenv("JARVIS_ENV", "production")
     monkeypatch.setenv("DB_BACKEND", "postgres")
+    monkeypatch.delenv("SERVER_FALLBACK_KEYS", raising=False)
     monkeypatch.setenv("AUTH_MODE", "clerk")
     monkeypatch.setenv("ALLOWED_CLERK_SUBJECTS", "clerk:test-user")
     monkeypatch.setenv("AUTH_ENABLED", "1")
@@ -310,7 +313,6 @@ def test_production_rejects_missing_or_weak_configuration(monkeypatch):
 
 def test_production_requires_postgres_backend(monkeypatch):
     monkeypatch.setenv("JARVIS_ENV", "production")
-    monkeypatch.setenv("DB_BACKEND", "sqlite")
     monkeypatch.setenv("AUTH_MODE", "clerk")
     monkeypatch.setenv("ALLOWED_CLERK_SUBJECTS", "clerk:test-user")
     monkeypatch.setenv("AUTH_ENABLED", "1")
@@ -322,5 +324,12 @@ def test_production_requires_postgres_backend(monkeypatch):
     monkeypatch.setenv("CLERK_AUTHORIZED_PARTIES", "https://jarvis.example.test")
     monkeypatch.setenv("API_KEY_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
 
+    monkeypatch.setenv("DB_BACKEND", "postgres")
+    monkeypatch.setenv("SERVER_FALLBACK_KEYS", "1")
+    with pytest.raises(RuntimeError, match="SERVER_FALLBACK_KEYS"):
+        validate_production_config()
+
+    monkeypatch.setenv("SERVER_FALLBACK_KEYS", "0")
+    monkeypatch.setenv("DB_BACKEND", "sqlite")
     with pytest.raises(RuntimeError, match="DB_BACKEND=postgres"):
         validate_production_config()

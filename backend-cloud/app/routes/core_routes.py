@@ -1,5 +1,5 @@
 """
-J.A.R.V.I.S v17.M — Core Routes
+J.A.R.V.I.S v18.0.0 — Core Routes
 FIXED: M5 add_alert on do_command, L5 _pulse() imports cached at module level
 """
 import time
@@ -119,7 +119,7 @@ def ping():
         "uptime_str": f"{uptime//3600}h {(uptime%3600)//60}m",
         "ts":         ts(),
         "ai":         ai_router_state.get("active", "groq"),
-        "version":    "v17.M"
+        "version":    "v18.0.0"
     })
 
 
@@ -205,7 +205,7 @@ def sysinfo():
     return jsonify({
         "uptime":     uptime,
         "uptime_str": f"{uptime//3600}h {(uptime%3600)//60}m",
-        "jarvis_ver": "v17.M",
+        "jarvis_ver": "v18.0.0",
     })
 
 
@@ -234,7 +234,7 @@ def _health_payload() -> dict:
     health = _database_health_snapshot(owner)
     return {
         "status": "ok" if health["db_ok"] else "degraded",
-        "version": "v17.M",
+        "version": "v18.0.0",
         "db_ok": health["db_ok"],
         "db_backend": health["db_backend"],
         "neon_select_1_latency_ms": health["neon_select_1_latency_ms"],

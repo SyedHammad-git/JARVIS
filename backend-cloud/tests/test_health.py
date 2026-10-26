@@ -43,6 +43,7 @@ def test_health_reports_neon_latency_vector_count_and_online_devices(monkeypatch
     payload = client.get("/api/health").get_json()
     details = client.get("/api/health/details").get_json()
 
+    assert client.get("/api/ping").get_json()["version"] == "v18.0.0"
     assert payload["status"] == "ok"
     assert payload["db_backend"] == "postgres"
     assert isinstance(payload["neon_select_1_latency_ms"], float)

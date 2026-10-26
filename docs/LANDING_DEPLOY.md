@@ -52,7 +52,14 @@ The dashboard sends a short-lived Clerk session token in `Authorization: Bearer 
 
 The backend's `backend-cloud/.env.example` has the backend-only variable names and setup notes. Do not place `API_KEY_ENCRYPTION_KEY`, Clerk secret keys, or AI provider keys in Vercel's `NEXT_PUBLIC_*` variables. The frontend never receives those values.
 
-The backend API must be deployed before enabling the dashboard. Check `GET /api/health` for availability, then verify the new Clerk-authenticated `/api/keys` and `/api/devices` endpoints from the dashboard.
+The backend API must be deployed before enabling the dashboard. Run it from `backend-cloud/` with the host-provided port:
+
+```bash
+gunicorn --bind "0.0.0.0:${PORT:?PORT must be provided by the host}" \
+  --worker-class gthread --threads 100 --workers 1 wsgi:app
+```
+
+Use one worker unless Socket.IO sticky sessions and a message queue are configured. Check `GET /api/health` for availability, then verify the Clerk-authenticated `/api/keys` and `/api/devices` endpoints from the dashboard.
 
 ### Backend environment variables
 
@@ -70,7 +77,7 @@ Configure these in the backend hosting provider's secret manager, not in Vercel:
 | `API_KEY_ENCRYPTION_KEY` | Yes | Primary Fernet key used to encrypt provider keys at rest. |
 | `API_KEY_ENCRYPTION_KEY_OLD` | Only during rotation | Previous Fernet key, accepted for decryption until the rotation completes. |
 | `CORS_ORIGINS` | Yes in production | Comma-separated browser origins allowed by Flask CORS. Never use `*`. |
-| `SERVER_FALLBACK_KEYS` | No; off by default | Set only to `1` to opt into server-wide provider-key fallback. Startup logs a prominent warning when enabled. |
+| `SERVER_FALLBACK_KEYS` | Must remain off | Production startup is refused if server-wide provider-key fallback is enabled. |
 | `JARVIS_ENV` | Production | Set to `production` to enforce production configuration and disable server-key use in ownerless background work. |
 | `AUTH_ENABLED` | Yes in production | Must be enabled. |
 | `FLASK_SECRET` | Yes in production | Strong random session-signing secret. |

@@ -1,4 +1,4 @@
-# J.A.R.V.I.S v17.M — Modular Edition
+# J.A.R.V.I.S v18.0.0 — Modular Edition
 
 **Just A Rather Very Intelligent System**  
 Built by Hammad • Iron Man Edition
@@ -121,7 +121,8 @@ Paired PCs connect on namespace `/device` (`wss://` in production).
   need sticky sessions and a message queue):
 
 ```bash
-gunicorn --worker-class gthread --threads 100 -w 1 wsgi:app
+gunicorn --bind "0.0.0.0:${PORT:?PORT must be provided by the host}" \
+  --worker-class gthread --threads 100 --workers 1 wsgi:app
 ```
 
 Pair a device (PIN required): `POST /api/devices/pair` then run

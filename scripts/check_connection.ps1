@@ -76,8 +76,9 @@ Write-Check "Backend AUTH_MODE=clerk" $authModeMatches `
     $(if ($authModeMatches) { "configured mode is clerk" } else { "configured mode is not clerk" })
 
 $fallbackKeys = Get-EnvironmentValue "SERVER_FALLBACK_KEYS"
-Write-Check "SERVER_FALLBACK_KEYS disabled" ($fallbackKeys -ne "1") `
-    $(if ($fallbackKeys -eq "1") { "disable server-wide provider-key fallback" } else { "fallback is off" })
+$fallbackKeysValid = -not ($production -and $fallbackKeys -eq "1")
+Write-Check "SERVER_FALLBACK_KEYS production policy" ([bool]$fallbackKeysValid) `
+    $(if ($fallbackKeysValid) { "fallback is not enabled in production" } else { "disable server-wide provider-key fallback" })
 
 $issuer = ConvertTo-AbsoluteUri (Get-EnvironmentValue "CLERK_ISSUER")
 $jwks = ConvertTo-AbsoluteUri (Get-EnvironmentValue "CLERK_JWKS_URL")

@@ -1,6 +1,6 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║   J.A.R.V.I.S  v17.M  —  Application Entry Point               ║
+║   J.A.R.V.I.S  v18.0.0  —  Application Entry Point             ║
 ║   FIXED: H3 random secret, M7 global error handlers, L7 health  ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
@@ -110,7 +110,7 @@ from app.db import DB_PATH
 
 print()
 print("╔══════════════════════════════════════════════════════════╗")
-print("║   J.A.R.V.I.S  v17.M  —  Enterprise Edition             ║")
+print("║   J.A.R.V.I.S  v18.0.0  —  Cloud Backend                ║")
 print("║   Just A Rather Very Intelligent System                  ║")
 print("║   Built by Hammad  •  github.com/SyedHammad-git         ║")
 print("╠══════════════════════════════════════════════════════════╣")
