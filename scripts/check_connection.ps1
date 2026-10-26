@@ -24,6 +24,30 @@ function ConvertTo-AbsoluteUri {
     return $null
 }
 
+function Get-ClerkFrontendApiDomain {
+    $publishableKey = Get-EnvironmentValue "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
+    if ($publishableKey -notmatch '^pk_(?:test|live)_([A-Za-z0-9_-]+)\$?$') {
+        return $null
+    }
+
+    $encodedDomain = $Matches[1].Replace("-", "+").Replace("_", "/")
+    switch ($encodedDomain.Length % 4) {
+        2 { $encodedDomain += "==" }
+        3 { $encodedDomain += "=" }
+    }
+    try {
+        $domain = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encodedDomain)).TrimEnd('$')
+        $domainUri = ConvertTo-AbsoluteUri "https://$domain"
+        if ($null -eq $domainUri -or $domainUri.Host -ne $domain -or
+            $domainUri.AbsolutePath -ne "/" -or $domainUri.Query -or $domainUri.Fragment) {
+            return $null
+        }
+        return $domainUri.Host
+    } catch {
+        return $null
+    }
+}
+
 function Write-Check {
     param(
         [string]$Name,
@@ -46,7 +70,8 @@ function Test-ListeningPort {
 
 $landingSecretNames = @(
     "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
-    "CLERK_SECRET_KEY"
+    "CLERK_SECRET_KEY",
+    "NEXT_PUBLIC_SITE_URL"
 )
 foreach ($name in $landingSecretNames) {
     $state = Get-EnvironmentState $name
@@ -57,7 +82,14 @@ $backendRequiredNames = @(
     "API_KEY_ENCRYPTION_KEY",
     "DATABASE_URL",
     "FLASK_SECRET",
-    "ALLOWED_CLERK_SUBJECTS"
+    "ALLOWED_CLERK_SUBJECTS",
+    "CLERK_ISSUER",
+    "CLERK_JWKS_URL",
+    "CLERK_AUTHORIZED_PARTIES",
+    "CORS_ORIGINS",
+    "LANDING_URL",
+    "BACKEND_URL",
+    "NEXT_PUBLIC_BACKEND_URL"
 )
 foreach ($name in $backendRequiredNames) {
     $state = Get-EnvironmentState $name
@@ -66,6 +98,9 @@ foreach ($name in $backendRequiredNames) {
 
 $production = (Get-EnvironmentValue "JARVIS_ENV") -eq "production"
 $dbBackend = Get-EnvironmentValue "DB_BACKEND"
+if (-not $production -and [string]::IsNullOrWhiteSpace($dbBackend)) {
+    $dbBackend = "sqlite"
+}
 $dbBackendValid = if ($production) { $dbBackend -eq "postgres" } else { $dbBackend -in @("sqlite", "postgres") }
 Write-Check "DB_BACKEND" ([bool]$dbBackendValid) `
     $(if ($dbBackendValid) { "configured backend is valid for this environment" } else { "production requires postgres; local mode allows sqlite or postgres" })
@@ -73,7 +108,7 @@ Write-Check "DB_BACKEND" ([bool]$dbBackendValid) `
 $authMode = Get-EnvironmentValue "AUTH_MODE"
 $authModeMatches = $authMode -eq "clerk"
 Write-Check "Backend AUTH_MODE=clerk" $authModeMatches `
-    $(if ($authModeMatches) { "configured mode is clerk" } else { "configured mode is not clerk" })
+    $(if ($authModeMatches) { "configured mode is clerk" } else { "set AUTH_MODE=clerk" })
 
 $fallbackKeys = Get-EnvironmentValue "SERVER_FALLBACK_KEYS"
 $fallbackKeysValid = -not ($production -and $fallbackKeys -eq "1")
@@ -82,11 +117,16 @@ Write-Check "SERVER_FALLBACK_KEYS production policy" ([bool]$fallbackKeysValid) 
 
 $issuer = ConvertTo-AbsoluteUri (Get-EnvironmentValue "CLERK_ISSUER")
 $jwks = ConvertTo-AbsoluteUri (Get-EnvironmentValue "CLERK_JWKS_URL")
+$frontendApiDomain = Get-ClerkFrontendApiDomain
 $clerkUrlsValid = $null -ne $issuer -and $null -ne $jwks -and
     $issuer.Scheme -eq "https" -and $jwks.Scheme -eq "https" -and
     $issuer.Host -eq $jwks.Host -and $jwks.AbsolutePath -eq "/.well-known/jwks.json"
 Write-Check "Clerk issuer and JWKS URL shape" ([bool]$clerkUrlsValid) `
-    $(if ($clerkUrlsValid) { "HTTPS endpoints are structurally consistent" } else { "expected matching HTTPS issuer and JWKS endpoints" })
+    $(if ($clerkUrlsValid) { "HTTPS endpoints are structurally consistent" } else { "configure matching HTTPS CLERK_ISSUER and CLERK_JWKS_URL values" })
+$issuerMatchesPublishableKey = $null -ne $frontendApiDomain -and $null -ne $issuer -and
+    $issuer.Host -eq $frontendApiDomain
+Write-Check "Clerk issuer matches publishable key" ([bool]$issuerMatchesPublishableKey) `
+    $(if ($issuerMatchesPublishableKey) { "issuer host matches the publishable-key Frontend API domain" } else { "match CLERK_ISSUER to NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" })
 
 $partyValue = Get-EnvironmentValue "CLERK_AUTHORIZED_PARTIES"
 $parties = @($partyValue -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
@@ -100,7 +140,7 @@ foreach ($party in $parties) {
     }
 }
 Write-Check "Clerk authorized-party origins" ([bool]$partiesValid) `
-    $(if ($partiesValid) { "explicit HTTPS origins configured" } else { "configure explicit HTTPS origins without wildcards" })
+    $(if ($partiesValid) { "explicit HTTPS origins configured" } else { "configure CLERK_AUTHORIZED_PARTIES with explicit HTTPS origins" })
 
 $corsValue = Get-EnvironmentValue "CORS_ORIGINS"
 $corsOrigins = @($corsValue -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
@@ -114,7 +154,7 @@ foreach ($origin in $corsOrigins) {
     }
 }
 Write-Check "Explicit CORS origins" ([bool]$corsValid) `
-    $(if ($corsValid) { "origin shape is valid" } else { "configure explicit origins; production origins must use HTTPS" })
+    $(if ($corsValid) { "origin shape is valid" } else { "configure CORS_ORIGINS; production origins must use HTTPS" })
 
 $hostValue = Get-EnvironmentValue "JARVIS_HOST"
 if ([string]::IsNullOrWhiteSpace($hostValue)) {
@@ -128,8 +168,10 @@ Write-Check "JARVIS_HOST loopback" ([bool]$loopback) `
     $(if ($loopback) { "loopback bind configured" } else { "refusing a non-loopback bind" })
 
 $backendUrlValue = Get-EnvironmentValue "NEXT_PUBLIC_BACKEND_URL"
+$desktopBackendUrlValue = Get-EnvironmentValue "BACKEND_URL"
 $backendUri = ConvertTo-AbsoluteUri $backendUrlValue
 $backendUrlValid = $null -ne $backendUri -and -not $backendUri.UserInfo -and
+    $backendUri.AbsolutePath -eq "/" -and -not $backendUri.Query -and -not $backendUri.Fragment -and
     ($backendUri.Scheme -eq "https" -or (
         -not $production -and $backendUri.Scheme -eq "http" -and (
             $backendUri.Host -eq "localhost" -or
@@ -138,7 +180,14 @@ $backendUrlValid = $null -ne $backendUri -and -not $backendUri.UserInfo -and
         )
     ))
 Write-Check "NEXT_PUBLIC_BACKEND_URL shape" ([bool]$backendUrlValid) `
-    $(if ($backendUrlValid) { "absolute HTTPS URL or development loopback" } else { "configure an HTTPS URL; HTTP is limited to development loopback" })
+    $(if ($backendUrlValid) { "absolute HTTPS URL or development loopback" } else { "configure NEXT_PUBLIC_BACKEND_URL as HTTPS; HTTP is limited to development loopback" })
+$desktopBackendUri = ConvertTo-AbsoluteUri $desktopBackendUrlValue
+$sharedBackendUrl = $backendUrlValid -and $null -ne $desktopBackendUri -and
+    -not $desktopBackendUri.UserInfo -and $desktopBackendUri.AbsolutePath -eq "/" -and
+    -not $desktopBackendUri.Query -and -not $desktopBackendUri.Fragment -and
+    $backendUri.GetLeftPart([UriPartial]::Authority) -eq $desktopBackendUri.GetLeftPart([UriPartial]::Authority)
+Write-Check "Shared landing and desktop backend URL" ([bool]$sharedBackendUrl) `
+    $(if ($sharedBackendUrl) { "both clients use the same configured backend origin" } else { "set BACKEND_URL and NEXT_PUBLIC_BACKEND_URL to the same origin" })
 
 $jwksPassed = $false
 $jwksStatus = "SKIP endpoint shape is invalid"
@@ -154,6 +203,8 @@ if ($clerkUrlsValid) {
             $jwksStatus = "HTTP $([int]$_.Exception.Response.StatusCode)"
         }
     }
+} else {
+    $jwksStatus = "configure CLERK_ISSUER and CLERK_JWKS_URL first"
 }
 Write-Check "Public Clerk JWKS endpoint" $jwksPassed $jwksStatus
 
@@ -182,7 +233,7 @@ if ($backendRunning) {
 if ($backendRunning) {
     Write-Check "Backend /api/ping" $pingPassed $pingDetail
 } else {
-    Write-Output "SKIP Backend /api/ping: backend is not listening"
+    Write-Check "Backend /api/ping" $false "backend is not listening on loopback port 5000"
 }
 
 if ($backendRunning) {
@@ -210,7 +261,7 @@ if ($backendRunning) {
     }
     Write-Check "CORS preflight from landing" $preflightPassed $preflightDetail
 } else {
-    Write-Output "SKIP CORS preflight: backend is not listening"
+    Write-Check "CORS preflight from landing" $false "backend is not listening on loopback port 5000"
 }
 
 if ($script:failureCount -gt 0) {

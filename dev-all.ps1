@@ -4,7 +4,10 @@ $repoRoot = $PSScriptRoot
 $backendDir = Join-Path $repoRoot "backend-cloud"
 $landingDir = Join-Path $repoRoot "landing"
 $backendUrl = "http://127.0.0.1:5000/api/ping"
+$backendOrigin = "http://127.0.0.1:5000"
 $landingUrl = "http://localhost:3000"
+$landingOrigin = "http://localhost:3000"
+$landingHealthUrl = "http://127.0.0.1:3000/manifest.webmanifest"
 
 function Test-HttpReady {
     param([string]$Url)
@@ -17,8 +20,16 @@ function Test-HttpReady {
 }
 
 if (-not (Test-HttpReady $backendUrl)) {
-    $backendCommand = "Set-Location -LiteralPath `"$backendDir`"; `$env:DB_BACKEND='sqlite'; `$env:JARVIS_HOST='127.0.0.1'; py wsgi.py"
-    Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoExit", "-Command", $backendCommand) | Out-Null
+    $env:JARVIS_SKIP_DOTENV = "1"
+    $env:PYTHONIOENCODING = "utf-8"
+    $env:DB_BACKEND = "sqlite"
+    $env:JARVIS_HOST = "127.0.0.1"
+    $env:BACKEND_URL = $backendOrigin
+    $env:NEXT_PUBLIC_BACKEND_URL = $backendOrigin
+    $env:LANDING_URL = $landingOrigin
+    $env:CORS_ORIGINS = $landingOrigin
+    Start-Process -FilePath "py.exe" -ArgumentList @("wsgi.py") `
+        -WorkingDirectory $backendDir | Out-Null
     Write-Output "Started backend development server."
 } else {
     Write-Output "Using the running backend."
@@ -37,9 +48,13 @@ if (-not $backendReady) {
 }
 Write-Output "Backend /api/ping is ready."
 
-if (-not (Test-HttpReady $landingUrl)) {
-    $landingCommand = "Set-Location -LiteralPath `"$landingDir`"; npm run dev"
-    Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoExit", "-Command", $landingCommand) | Out-Null
+if (-not (Test-HttpReady $landingHealthUrl)) {
+    $env:BACKEND_URL = $backendOrigin
+    $env:NEXT_PUBLIC_BACKEND_URL = $backendOrigin
+    $env:NEXT_PUBLIC_SITE_URL = $landingOrigin
+    Start-Process -FilePath "npm.cmd" `
+        -ArgumentList @("run", "dev", "--", "--hostname", "127.0.0.1", "--port", "3000") `
+        -WorkingDirectory $landingDir | Out-Null
     Write-Output "Started landing development server."
 } else {
     Write-Output "Using the running landing server."
@@ -47,7 +62,7 @@ if (-not (Test-HttpReady $landingUrl)) {
 
 $landingReady = $false
 for ($attempt = 0; $attempt -lt 120; $attempt++) {
-    if (Test-HttpReady $landingUrl) {
+    if (Test-HttpReady $landingHealthUrl) {
         $landingReady = $true
         break
     }

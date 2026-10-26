@@ -20,12 +20,14 @@ describe("content security policy", () => {
   });
 
   it("allows development evaluation and HMR while retaining Clerk and backend sources", () => {
-    const policy = parsePolicy(contentSecurityPolicy({
+    const header = new Headers({ "Content-Security-Policy": contentSecurityPolicy({
       nonce: "test-nonce",
       backendOrigin,
       clerkFrontendApiDomain: frontendApiDomain,
       development: true,
-    }));
+    }) }).get("Content-Security-Policy");
+    expect(header).toBeTruthy();
+    const policy = parsePolicy(header!);
 
     expect(policy.get("script-src")).toEqual(expect.arrayContaining([
       "'unsafe-eval'",
@@ -45,29 +47,39 @@ describe("content security policy", () => {
   });
 
   it("keeps production strict, exact-host-only, and allows Clerk and backend sources", () => {
-    const policy = contentSecurityPolicy({
+    const header = new Headers({ "Content-Security-Policy": contentSecurityPolicy({
       nonce: "test-nonce",
       backendOrigin,
       clerkFrontendApiDomain: frontendApiDomain,
       development: false,
-    });
-    const parsed = parsePolicy(policy);
+    }) }).get("Content-Security-Policy");
+    expect(header).toBeTruthy();
+    const parsed = parsePolicy(header!);
 
     expect(parsed.get("script-src")).not.toContain("'unsafe-eval'");
     expect(parsed.get("script-src")).toEqual(expect.arrayContaining([
       `https://${frontendApiDomain}`,
       "https://challenges.cloudflare.com",
     ]));
-    expect(policy).not.toContain("*");
+    expect(parsed.get("script-src")).toContain("https://*.protect.clerk.com");
     expect(parsed.get("connect-src")).toEqual(expect.arrayContaining([
       backendOrigin,
       `https://${frontendApiDomain}`,
+      "https://*.protect.clerk.com:*",
     ]));
     expect(parsed.get("img-src")).toEqual(expect.arrayContaining([
       `https://${frontendApiDomain}`,
       "https://img.clerk.com",
     ]));
     expect(parsed.get("frame-src")).toContain("https://challenges.cloudflare.com");
+    expect(parsed.get("frame-src")).toContain("https://*.protect.clerk.com");
     expect(parsed.get("worker-src")).toEqual(["'self'", "blob:"]);
+
+    const wildcardSources = [...parsed.values()].flat().filter((source) => source.includes("*"));
+    expect(wildcardSources).toEqual([
+      "https://*.protect.clerk.com",
+      "https://*.protect.clerk.com:*",
+      "https://*.protect.clerk.com",
+    ]);
   });
 });

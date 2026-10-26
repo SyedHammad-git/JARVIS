@@ -48,6 +48,7 @@ export function contentSecurityPolicy({
     ...(development ? ["'unsafe-eval'"] : []),
     frontendApi,
     "https://challenges.cloudflare.com",
+    ...(!development ? ["https://*.protect.clerk.com"] : []),
   ];
 
   return [
@@ -55,8 +56,8 @@ export function contentSecurityPolicy({
     `script-src ${scriptSources.join(" ")}`,
     `style-src 'self' 'unsafe-inline' ${frontendApi}`,
     `img-src 'self' data: blob: ${frontendApi} https://img.clerk.com`,
-    `connect-src 'self' ${backendOrigin} ${frontendApi} https://challenges.cloudflare.com ${devConnectSources.join(" ")}`.trim(),
-    `frame-src 'self' ${frontendApi} https://challenges.cloudflare.com`,
+    `connect-src 'self' ${backendOrigin} ${frontendApi} https://challenges.cloudflare.com ${development ? "" : "https://*.protect.clerk.com:*"} ${devConnectSources.join(" ")}`.trim(),
+    `frame-src 'self' ${frontendApi} https://challenges.cloudflare.com ${development ? "" : "https://*.protect.clerk.com"}`.trim(),
     "worker-src 'self' blob:",
     "font-src 'self' data:",
     "object-src 'none'",

@@ -10,7 +10,7 @@ const { createCamera } = require('./camera');
 const { createCommandHandler, createExecutor, HIGH_RISK_ACTIONS } = require('./executor');
 const { createRevocationMonitor, isRevokedConnectError, isUnauthorizedConnectError } = require('./revocation');
 const { loadPreferences, persistedPreferences } = require('./preferences');
-const { redeemPairCode } = require('./pairing');
+const { configuredBackendUrl, redeemPairCode } = require('./pairing');
 const { createStore, validateConfig } = require('./store');
 const { denyWindowPermissions } = require('./window-security');
 
@@ -238,9 +238,18 @@ async function connectDevice() {
 }
 
 ipcMain.handle('pairing:get', () => {
+  let configuredUrl = '';
+  try {
+    configuredUrl = configuredBackendUrl();
+  } catch (error) {
+    if (error.message !== 'invalid_backend_url' && error.message !== 'insecure_url') throw error;
+    return { url: '', deviceId: '', hasToken: false, error: 'BACKEND_URL is invalid; configure an HTTPS backend URL.' };
+  }
   try {
     const config = store.load();
-    return config ? { url: config.url, deviceId: config.deviceId, hasToken: true } : { url: '', deviceId: '', hasToken: false };
+    return config
+      ? { url: config.url, deviceId: config.deviceId, hasToken: true }
+      : { url: configuredUrl, deviceId: '', hasToken: false, urlLocked: Boolean(configuredUrl) };
   } catch {
     return { url: '', deviceId: '', error: 'Stored pairing is unavailable; pair again.' };
   }

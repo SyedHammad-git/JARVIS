@@ -5,6 +5,7 @@ const message = document.querySelector('#message');
 
 window.jarvis.getPairing().then((config) => {
   document.querySelector('#url').value = config.url;
+  document.querySelector('#url').readOnly = Boolean(config.urlLocked);
   if (config.error) message.textContent = config.error;
 });
 

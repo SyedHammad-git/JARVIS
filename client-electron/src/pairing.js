@@ -15,6 +15,11 @@ function validateBackendUrl(value, devMode = process.env.JARVIS_DEV === '1') {
   return url.toString().replace(/\/$/, '');
 }
 
+function configuredBackendUrl(value = process.env.BACKEND_URL, devMode = process.env.JARVIS_DEV === '1') {
+  if (typeof value !== 'string' || !value.trim()) return '';
+  return validateBackendUrl(value, devMode);
+}
+
 async function redeemPairCode({ url, code, name = 'PC' }, fetchImpl = fetch, devMode = process.env.JARVIS_DEV === '1') {
   const backendUrl = validateBackendUrl(url, devMode);
   const normalizedCode = typeof code === 'string' ? code.trim().toUpperCase() : '';
@@ -42,4 +47,4 @@ async function redeemPairCode({ url, code, name = 'PC' }, fetchImpl = fetch, dev
   return { url: backendUrl, deviceId: payload.device_id, token: payload.token };
 }
 
-module.exports = { redeemPairCode, validateBackendUrl };
+module.exports = { configuredBackendUrl, redeemPairCode, validateBackendUrl };

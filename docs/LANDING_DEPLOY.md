@@ -19,6 +19,9 @@ The [landing/.env.example](../landing/.env.example) contains names only. Do not 
 | `NEXT_PUBLIC_DOWNLOAD_SHA256` | SHA-256 checksum for that exact installer asset |
 
 Set the corresponding **Preview** values too, preferably using a separate Clerk development instance and a non-production backend. Never use a production backend URL in untrusted preview deployments.
+Configure the Electron client runtime with `BACKEND_URL` set to the exact same HTTPS backend origin as `NEXT_PUBLIC_BACKEND_URL`. The desktop pairing screen uses this setting as its initial backend URL; without it, the user must enter the backend origin manually.
+
+The backend also requires `LANDING_URL` in production. Set it to the canonical landing-site HTTPS origin; backend `/` and `/mobile` routes redirect there with HTTP 302. These legacy UI routes remain available in development.
 
 ## 2. Configure Clerk
 
@@ -83,6 +86,7 @@ Configure these in the backend hosting provider's secret manager, not in Vercel:
 | `AUTH_ENABLED` | Yes in production | Must be enabled. |
 | `FLASK_SECRET` | Yes in production | Strong random session-signing secret. |
 | `DATABASE_URL` | Yes in production | Persistent PostgreSQL connection URL. |
+| `LANDING_URL` | Yes in production | Canonical HTTPS landing origin; `/` and `/mobile` redirect here. |
 | `DATABASE_URL_DIRECT` | Only for direct migration tools | Direct PostgreSQL endpoint for maintenance scripts; do not use a pooled endpoint. |
 | `DB_BACKEND` | `postgres` in production | Select the database backend. Production refuses SQLite and uses Neon/PostgreSQL only. |
 | `TRUSTED_PROXY_HOPS` | Optional | Number of trusted reverse-proxy hops; configure only when the backend is behind a known proxy. |
@@ -134,4 +138,4 @@ The browser smoke suite starts Next.js on loopback, mocks backend API responses,
 ### Troubleshooting
 
 - A hydration warning mentioning `bis_skin_checked` is commonly caused by a browser extension injecting attributes into the page. Verify in a clean browser profile or disable the extension; do not change application markup to accommodate injected attributes.
-- The production CSP intentionally uses exact Clerk Frontend API and Cloudflare challenge hosts and does not include Clerk's documented `*.protect.clerk.com` wildcard. This keeps the policy wildcard-free, but Clerk abuse/fraud protection hosts may be blocked; if that feature is required, revisit this tradeoff explicitly.
+- The production CSP allows Clerk's documented abuse/fraud protection wildcard only: `https://*.protect.clerk.com` in `script-src` and `frame-src`, and `https://*.protect.clerk.com:*` in `connect-src` (the port wildcard is required because these endpoints use non-443 ports). The exact Clerk Frontend API hostname is derived from the publishable key; the policy also includes Clerk's challenge/image hosts and the configured backend origin. Development adds `unsafe-eval` and localhost HMR websocket sources; production does not include `unsafe-eval`.

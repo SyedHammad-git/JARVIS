@@ -11,9 +11,12 @@ const { createApproval } = require('../src/approval');
 const { createStore, validateConfig } = require('../src/store');
 const { createAudit } = require('../src/audit');
 const { createRevocationMonitor, isRevokedConnectError, isUnauthorizedConnectError } = require('../src/revocation');
-const { redeemPairCode, validateBackendUrl } = require('../src/pairing');
+const { configuredBackendUrl, redeemPairCode, validateBackendUrl } = require('../src/pairing');
 
 test('pairing redeems a short-lived code and validates the backend URL', async () => {
+  assert.equal(configuredBackendUrl('https://backend.example.test'), 'https://backend.example.test');
+  assert.equal(configuredBackendUrl('', false), '');
+  assert.throws(() => configuredBackendUrl('http://backend.example.test', false), /insecure_url/);
   assert.equal(validateBackendUrl('http://localhost:5000', true), 'http://localhost:5000');
   assert.throws(() => validateBackendUrl('http://example.test'), /insecure_url/);
   const calls = [];

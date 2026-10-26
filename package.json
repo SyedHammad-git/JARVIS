@@ -1,0 +1,7 @@
+{
+  "name": "jarvis-v18",
+  "private": true,
+  "scripts": {
+    "dev:all": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\dev-all.ps1"
+  }
+}
