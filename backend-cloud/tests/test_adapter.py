@@ -214,5 +214,17 @@ class ChatFailoverTests(unittest.TestCase):
         self.assertIn("detail=https://provider.test/error?[REDACTED]", "\n".join(captured.output))
 
 
+def test_database_compatibility_import_preserves_canonical_module_identity():
+    import importlib
+
+    import app.db as database
+
+    compatibility_database = importlib.import_module("app.database")
+
+    assert compatibility_database is database
+    assert sys.modules["app.database"] is database
+    assert sys.modules["database"] is database
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -131,9 +131,16 @@ test('credential store encrypts persisted data and audit omits token fields', ()
 
     const audit = createAudit({ app: { getPath: () => directory } });
     audit.write({ action: 'open_app', args: { target: 'notepad', token: credentials.token }, result: { ok: true } });
+    const encodedImage = 'A'.repeat(200);
+    audit.write({
+      action: 'camera_snapshot',
+      args: { image_b64: encodedImage, detail: `data:image/jpeg;base64,${encodedImage}` },
+    });
     const line = fs.readFileSync(audit.filePath, 'utf8');
     assert.equal(line.includes(credentials.token), false);
     assert.equal(line.includes('"token"'), false);
+    assert.equal(line.includes(encodedImage), false);
+    assert.equal(line.includes('data:image/jpeg;base64'), false);
     store.clear();
     assert.equal(store.load(), null);
   } finally {
