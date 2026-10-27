@@ -5,7 +5,7 @@ import logging
 import os
 import threading
 from datetime import timedelta
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import jwt
 from flask import g, jsonify, request, session
@@ -60,7 +60,7 @@ def _verify_clerk_token(token: str) -> str | None:
 
 
 def configured_authorized_parties() -> list[str]:
-    raw = os.environ.get("CLERK_AUTHORIZED_PARTIES", "")
+    raw = os.environ.get("AUTHORIZED_PARTIES", os.environ.get("CLERK_AUTHORIZED_PARTIES", ""))
     return [party.strip().rstrip("/") for party in raw.split(",") if party.strip()]
 
 
@@ -111,63 +111,129 @@ def configured_cors_origins() -> list[str]:
         "http://127.0.0.1:5000,http://localhost:5000",
     )
     origins = [origin.strip().rstrip("/") for origin in raw.split(",") if origin.strip()]
-    if not origins or "*" in origins:
-        raise RuntimeError("CORS_ORIGINS must contain explicit origins and cannot contain '*'")
+    if not origins or any(not _is_origin(origin) for origin in origins):
+        raise RuntimeError("CORS_ORIGINS must contain exact origins and cannot contain '*'")
     return origins
+
+
+def _is_https_url(value: str, *, origin_only: bool = False) -> bool:
+    try:
+        parsed = urlsplit(value)
+        return (
+            parsed.scheme == "https"
+            and bool(parsed.hostname)
+            and not parsed.username
+            and not parsed.password
+            and "*" not in value
+            and not parsed.query
+            and not parsed.fragment
+            and (not origin_only or parsed.path in ("", "/") and not parsed.query and not parsed.fragment)
+        )
+    except ValueError:
+        return False
+
+
+def _is_origin(value: str, *, https_only: bool = False) -> bool:
+    try:
+        parsed = urlsplit(value)
+        return (
+            parsed.scheme in ({"https"} if https_only else {"https", "http"})
+            and bool(parsed.hostname)
+            and not parsed.username
+            and not parsed.password
+            and parsed.path in ("", "/")
+            and not parsed.query
+            and not parsed.fragment
+            and "*" not in value
+        )
+    except ValueError:
+        return False
+
+
+def production_config_errors(env=None) -> list[str]:
+    values = os.environ if env is None else env
+    error_names = []
+
+    def require(condition: bool, name: str) -> None:
+        if not condition:
+            error_names.append(name)
+
+    require(values.get("JARVIS_ENV", "").strip().lower() == "production", "JARVIS_ENV")
+    require(values.get("AUTH_MODE", "").strip().lower() == "clerk", "AUTH_MODE")
+    require(values.get("AUTH_ENABLED", "1").strip() == "1", "AUTH_ENABLED")
+
+    issuer = values.get("CLERK_ISSUER", "").strip()
+    jwks_url = values.get("CLERK_JWKS_URL", "").strip()
+    parties_raw = values.get("AUTHORIZED_PARTIES", values.get("CLERK_AUTHORIZED_PARTIES", ""))
+    parties = [part.strip() for part in parties_raw.split(",") if part.strip()]
+    require(_is_https_url(issuer), "CLERK_ISSUER")
+    require(_is_https_url(jwks_url), "CLERK_JWKS_URL")
+    require(bool(parties) and all(_is_origin(party, https_only=True) for party in parties), "AUTHORIZED_PARTIES")
+
+    subjects = [item.strip() for item in values.get("ALLOWED_CLERK_SUBJECTS", "").split(",") if item.strip()]
+    allow_any_user = values.get("ALLOW_ANY_CLERK_USER", "").strip() == "1"
+    require(
+        (bool(subjects) and all(subject.startswith("clerk:") for subject in subjects)) or allow_any_user,
+        "ALLOWED_CLERK_SUBJECTS",
+    )
+
+    secret = values.get("FLASK_SECRET", "")
+    require(
+        len(secret) >= 32 and len(set(secret)) >= 8
+        and secret.lower() not in {"change-me", "secret", "password"},
+        "FLASK_SECRET",
+    )
+
+    cors_raw = values.get("CORS_ORIGINS", "")
+    cors_origins = [origin.strip() for origin in cors_raw.split(",") if origin.strip()]
+    require(bool(cors_origins) and all(_is_origin(origin, https_only=True) for origin in cors_origins), "CORS_ORIGINS")
+
+    database_url = values.get("DATABASE_URL", "").strip()
+    try:
+        database = urlsplit(database_url)
+        query = parse_qs(database.query)
+        local_smoke_host = database.hostname in {"localhost", "127.0.0.1", "::1"}
+        database_valid = (
+            database.scheme in {"postgres", "postgresql"}
+            and bool(database.hostname)
+            and (
+                "-pooler" in database.hostname.lower()
+                or values.get("JARVIS_SMOKE_TEST", "") == "1" and local_smoke_host
+            )
+            and query.get("sslmode", [""])[0] in {"require", "verify-ca", "verify-full"}
+        )
+    except ValueError:
+        database_valid = False
+    require(database_valid, "DATABASE_URL")
+    require(values.get("DB_BACKEND", "").strip().lower() == "postgres", "DB_BACKEND")
+    require(values.get("SERVER_FALLBACK_KEYS", "").strip() != "1", "SERVER_FALLBACK_KEYS")
+
+    try:
+        from cryptography.fernet import Fernet
+        encryption_key = values.get("API_KEY_ENCRYPTION_KEY", "").strip()
+        Fernet(encryption_key.encode("ascii"))
+        encryption_key_valid = True
+    except (ImportError, ValueError, UnicodeError):
+        encryption_key_valid = False
+    require(encryption_key_valid, "API_KEY_ENCRYPTION_KEY")
+    require(_is_https_url(values.get("LANDING_URL", "").strip(), origin_only=True), "LANDING_URL")
+
+    try:
+        proxy_hops = int(values.get("TRUSTED_PROXY_HOPS", "0"))
+        proxy_valid = 0 <= proxy_hops <= 5
+    except (TypeError, ValueError):
+        proxy_valid = False
+    require(proxy_valid, "TRUSTED_PROXY_HOPS")
+    return error_names
 
 
 def validate_production_config() -> None:
     validate_allowed_clerk_subjects()
     if os.environ.get("JARVIS_ENV", "development").lower() != "production":
         return
-    auth_mode = configured_auth_mode()
-    if auth_mode != "clerk":
-        if os.environ.get("ALLOW_LOCAL_AUTH", "").strip() != "1":
-            raise RuntimeError("Production startup refused: AUTH_MODE=clerk is required")
-        log.critical(
-            "SECURITY WARNING: ALLOW_LOCAL_AUTH=1 enables local password/TOTP auth in production"
-        )
-    if os.environ.get("AUTH_ENABLED", "1") != "1":
-        raise RuntimeError("Production startup refused: AUTH_ENABLED must be 1")
-    secret = os.environ.get("FLASK_SECRET", "")
-    if len(secret) < 32 or len(set(secret)) < 8 or secret.lower() in {"change-me", "secret", "password"}:
-        raise RuntimeError("Production startup refused: FLASK_SECRET must be a strong random value of at least 32 characters")
-    cors = os.environ.get("CORS_ORIGINS", "").strip()
-    if not cors or "*" in [origin.strip() for origin in cors.split(",")]:
-        raise RuntimeError("Production startup refused: CORS_ORIGINS must contain explicit origins")
-    if not os.environ.get("DATABASE_URL", "").strip():
-        raise RuntimeError("Production startup refused: DATABASE_URL is required")
-    if os.environ.get("DB_BACKEND", "sqlite").strip().lower() != "postgres":
-        raise RuntimeError("Production startup refused: DB_BACKEND=postgres is required")
-    if os.environ.get("SERVER_FALLBACK_KEYS", "").strip() == "1":
-        raise RuntimeError("Production startup refused: SERVER_FALLBACK_KEYS must remain disabled")
-    if auth_mode == "clerk":
-        if (not os.environ.get("CLERK_ISSUER", "").strip()
-                or not os.environ.get("CLERK_JWKS_URL", "").strip()):
-            raise RuntimeError("Production startup refused: CLERK_ISSUER and CLERK_JWKS_URL are required")
-        authorized_parties = configured_authorized_parties()
-        if not authorized_parties:
-            raise RuntimeError("Production startup refused: CLERK_AUTHORIZED_PARTIES is required")
-        if any(not party.startswith("https://") or "*" in party for party in authorized_parties):
-            raise RuntimeError("Production startup refused: authorized parties must be explicit HTTPS origins")
-    if not os.environ.get("API_KEY_ENCRYPTION_KEY", "").strip():
-        raise RuntimeError("Production startup refused: API_KEY_ENCRYPTION_KEY is required")
-    landing_url = os.environ.get("LANDING_URL", "").strip()
-    try:
-        parsed_landing_url = urlsplit(landing_url)
-        landing_url_valid = (
-            parsed_landing_url.scheme == "https"
-            and bool(parsed_landing_url.hostname)
-            and not parsed_landing_url.username
-            and not parsed_landing_url.password
-            and parsed_landing_url.path in ("", "/")
-            and not parsed_landing_url.query
-            and not parsed_landing_url.fragment
-        )
-    except ValueError:
-        landing_url_valid = False
-    if not landing_url_valid:
-        raise RuntimeError("Production startup refused: LANDING_URL must be an absolute HTTPS URL")
+    errors = production_config_errors()
+    if errors:
+        raise RuntimeError(f"Production startup refused: invalid configuration ({', '.join(errors)})")
 
 
 def install_api_security(app) -> None:
@@ -258,6 +324,10 @@ def install_api_security(app) -> None:
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        if os.environ.get("JARVIS_ENV", "development").strip().lower() == "production":
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
         if request.path.startswith("/api/") or request.path == "/pairing/redeem-code":
             response.headers["Cache-Control"] = "no-store"
         if request.path in {"/", "/mobile"}:

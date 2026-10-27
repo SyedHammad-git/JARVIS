@@ -6,14 +6,19 @@ import os
 import re
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+BACKEND_DIR = Path(__file__).resolve().parents[1]
 
-try:
-    from dotenv import load_dotenv
-    if os.environ.get("JARVIS_SKIP_DOTENV") != "1":
-        load_dotenv(ROOT / ".env", override=False)
-except ImportError:
-    pass
+def load_backend_environment() -> None:
+    if os.environ.get("JARVIS_SKIP_DOTENV") == "1":
+        return
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    load_dotenv(BACKEND_DIR / ".env", override=False)
+
+
+load_backend_environment()
 
 # Importing database initializes SQLite; migration DDL itself uses only the direct URL.
 os.environ.setdefault("DB_BACKEND", "sqlite")

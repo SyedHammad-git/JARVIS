@@ -103,7 +103,12 @@ class AgentLoopTests(unittest.TestCase):
             raw = execute_tool(
                 "open_app",
                 {"target": "notepad"},
-                {"device_id": "dev_test", "confirmed": True},
+                {
+                    "device_id": "dev_test",
+                    "confirmed": True,
+                    "confirmed_signature": 'open_app:{"target": "notepad"}',
+                    "confirmation_nonce": "approved-nonce",
+                },
             )
         data = json.loads(raw)
         self.assertFalse(data["ok"])
@@ -115,7 +120,12 @@ class AgentLoopTests(unittest.TestCase):
             raw = execute_tool(
                 "open_app",
                 {"target": "notepad"},
-                {"device_id": "dev_live", "confirmed": True},
+                {
+                    "device_id": "dev_live",
+                    "confirmed": True,
+                    "confirmed_signature": 'open_app:{"target": "notepad"}',
+                    "confirmation_nonce": "approved-nonce",
+                },
             )
         mock_call.assert_called_once_with(
             "dev_live",
@@ -123,7 +133,7 @@ class AgentLoopTests(unittest.TestCase):
             {"target": "notepad"},
             owner_username=None,
             confirmed=True,
-            confirmation_nonce=None,
+            confirmation_nonce="approved-nonce",
         )
         data = json.loads(raw)
         self.assertTrue(data["ok"])
@@ -199,6 +209,33 @@ class AgentLoopTests(unittest.TestCase):
         self.assertTrue(out["needs_confirmation"])
         self.assertEqual(out["reason"], "untrusted_web_content")
         call_device.assert_not_called()
+
+    def test_confirmed_device_action_requires_matching_signature_and_nonce(self):
+        args = {"target": "notepad"}
+        with patch("app.devices.gateway.call_device", return_value={"ok": True}) as call_device:
+            denied = execute_tool(
+                "open_app", args,
+                {
+                    "confirmed": True,
+                    "confirmed_signature": "open_app:{}",
+                    "confirmation_nonce": "nonce",
+                    "owner_username": "owner-a",
+                },
+            )
+            self.assertTrue(json.loads(denied)["needs_confirmation"])
+            call_device.assert_not_called()
+
+            approved = execute_tool(
+                "open_app", args,
+                {
+                    "confirmed": True,
+                    "confirmed_signature": "open_app:{\"target\": \"notepad\"}",
+                    "confirmation_nonce": "nonce",
+                    "owner_username": "owner-a",
+                },
+            )
+            self.assertTrue(json.loads(approved)["ok"])
+        call_device.assert_called_once()
 
     def test_duplicate_action_cache_is_partitioned_by_owner(self):
         with patch("app.devices.gateway.call_device", return_value={"ok": True}) as call_device:

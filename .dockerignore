@@ -1,0 +1,12 @@
+**/.env
+**/.env.*
+**/*secret*
+.git
+**/.git
+**/node_modules
+**/.next
+**/__pycache__
+**/*.py[cod]
+client-electron/release
+landing/test-results
+landing/playwright-report

@@ -10,13 +10,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
 
 try:
     from dotenv import load_dotenv
-    load_dotenv(str(Path(__file__).resolve().parent.parent / ".env"), override=False)
+    if os.environ.get("JARVIS_SKIP_DOTENV") != "1":
+        load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 except ImportError:
     pass
 
@@ -27,12 +29,15 @@ def main() -> int:
     p = argparse.ArgumentParser(description="JARVIS fake device (Socket.IO /device)")
     p.add_argument("--url", default="http://127.0.0.1:5000")
     p.add_argument("--device-id", required=True)
-    p.add_argument("--token", required=True)
+    p.add_argument("--token", help=argparse.SUPPRESS)
+    p.add_argument("--token-env", default="JARVIS_TEST_DEVICE_TOKEN")
     p.add_argument("--never-ack", action="store_true")
     p.add_argument("--wrong-token", action="store_true")
     args = p.parse_args()
 
-    token = args.token
+    token = args.token or os.environ.get(args.token_env, "")
+    if not token:
+        p.error(f"provide --token or set {args.token_env}")
     if args.wrong_token:
         token = "wrong-" + ("x" * 32)
 

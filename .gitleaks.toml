@@ -1,0 +1,23 @@
+title = "JARVIS secret scanning rules"
+
+[[rules]]
+id = "provider-live-test-token"
+description = "Live or test provider token"
+regex = '''\bsk_(?:live|test)_[A-Za-z0-9_-]{16,}\b'''
+keywords = ["sk_live_", "sk_test_"]
+
+[[rules]]
+id = "clerk-webhook-signing-secret"
+description = "Clerk/Svix webhook signing secret"
+regex = '''\bwhsec_[A-Za-z0-9_=-]{16,}\b'''
+keywords = ["whsec_"]
+
+[[rules]]
+id = "neon-password-token"
+description = "Neon password-like token"
+regex = '''\bnpg_[A-Za-z0-9_-]{16,}\b'''
+keywords = ["npg_"]
+
+[allowlist]
+description = "Environment files are excluded from scans and version control"
+paths = ['''(^|/)\.env(?:\..*)?$''']

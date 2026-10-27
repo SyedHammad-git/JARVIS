@@ -68,7 +68,7 @@ def execute_tool(name: str, args: dict, ctx: dict | None = None) -> str:
     confirmation_required = tool.risk == "high" or (
         tool.where == "device"
         and tool.risk in ("medium", "high")
-        and ctx.get("ingested_web_content")
+        and (ctx.get("ingested_web_content") or ctx.get("confirmed"))
     )
     confirmed_signature = ctx.get("confirmed_signature")
     if confirmation_required and (

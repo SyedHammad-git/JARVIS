@@ -7,7 +7,20 @@ import json
 import os
 from pathlib import Path
 
-os.environ["JARVIS_SKIP_DOTENV"] = "1"
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+
+def load_backend_environment() -> None:
+    if os.environ.get("JARVIS_SKIP_DOTENV") == "1":
+        return
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    load_dotenv(BACKEND_DIR / ".env", override=False)
+
+
+load_backend_environment()
 
 from app import db as database
 from app.db import OWNER_SCOPED_TABLES

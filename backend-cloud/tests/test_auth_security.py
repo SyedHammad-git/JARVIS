@@ -13,7 +13,9 @@ from app.authentication import create_user
 from app.security import (
     configure_session,
     configure_proxy,
+    configured_cors_origins,
     get_client_ip,
+    production_config_errors,
     validate_production_config,
 )
 
@@ -202,24 +204,18 @@ def test_production_clerk_requires_subject_allowlist_unless_explicitly_overridde
         create_app(testing=True)
 
 
-def test_production_requires_clerk_auth_unless_explicitly_overridden(monkeypatch, caplog):
+def test_production_requires_clerk_auth_even_with_local_auth_override(monkeypatch):
     monkeypatch.setenv("JARVIS_ENV", "production")
     monkeypatch.setenv("DB_BACKEND", "postgres")
     monkeypatch.delenv("SERVER_FALLBACK_KEYS", raising=False)
     monkeypatch.setenv("AUTH_MODE", "local")
     monkeypatch.delenv("ALLOW_LOCAL_AUTH", raising=False)
-    with pytest.raises(RuntimeError, match="AUTH_MODE=clerk"):
+    with pytest.raises(RuntimeError, match="AUTH_MODE"):
         validate_production_config()
 
     monkeypatch.setenv("ALLOW_LOCAL_AUTH", "1")
-    monkeypatch.setenv("AUTH_ENABLED", "1")
-    monkeypatch.setenv("FLASK_SECRET", "synthetic-production-secret-0123456789abcdef")
-    monkeypatch.setenv("CORS_ORIGINS", "https://jarvis.example.test")
-    monkeypatch.setenv("DATABASE_URL", "postgresql://pooler.invalid/db")
-    monkeypatch.setenv("API_KEY_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
-    with caplog.at_level("CRITICAL", logger="jarvis.security"):
+    with pytest.raises(RuntimeError, match="AUTH_MODE"):
         validate_production_config()
-    assert "ALLOW_LOCAL_AUTH=1 enables local password/TOTP auth in production" in caplog.text
 
 
 def test_proxyfix_trusts_forwarded_ip_only_when_hops_configured(monkeypatch):
@@ -264,6 +260,72 @@ def test_security_headers_and_explicit_cors(monkeypatch):
     assert api.headers["Cache-Control"] == "no-store"
 
 
+def test_production_security_headers_include_transport_and_permissions(monkeypatch):
+    monkeypatch.setenv("JARVIS_ENV", "production")
+    app = Flask("production-header-test")
+    from app.security import install_api_security
+    install_api_security(app)
+    response = app.test_client().get("/")
+    assert response.headers["Strict-Transport-Security"] == "max-age=31536000"
+    assert response.headers["Permissions-Policy"] == "camera=(), microphone=(), geolocation=()"
+    assert response.headers["X-Permitted-Cross-Domain-Policies"] == "none"
+
+
+def test_production_config_shape_validation_uses_names_only():
+    env = {
+        "JARVIS_ENV": "production",
+        "AUTH_MODE": "clerk",
+        "AUTH_ENABLED": "1",
+        "CLERK_ISSUER": "https://clerk.example.test",
+        "CLERK_JWKS_URL": "https://clerk.example.test/.well-known/jwks.json",
+        "AUTHORIZED_PARTIES": "https://jarvis.example.test",
+        "ALLOWED_CLERK_SUBJECTS": "clerk:test-user",
+        "FLASK_SECRET": "synthetic-production-secret-0123456789abcdef",
+        "CORS_ORIGINS": "https://jarvis.example.test",
+        "DATABASE_URL": "postgresql://test@ep-prod-pooler.invalid/neondb?sslmode=require",
+        "DB_BACKEND": "postgres",
+        "SERVER_FALLBACK_KEYS": "0",
+        "API_KEY_ENCRYPTION_KEY": Fernet.generate_key().decode("ascii"),
+        "LANDING_URL": "https://jarvis.example.test",
+        "TRUSTED_PROXY_HOPS": "1",
+    }
+    assert production_config_errors(env) == []
+
+    env["ALLOWED_CLERK_SUBJECTS"] = "bare-subject"
+    assert "ALLOWED_CLERK_SUBJECTS" in production_config_errors(env)
+    env["ALLOWED_CLERK_SUBJECTS"] = "clerk:test-user"
+    env["TRUSTED_PROXY_HOPS"] = "6"
+    env["CORS_ORIGINS"] = "https://jarvis.example.test/path"
+    env["DATABASE_URL"] = "postgresql://test@ep-prod-pooler.invalid/neondb"
+    env["AUTHORIZED_PARTIES"] = "https://*.example.test"
+    errors = production_config_errors(env)
+    assert {"TRUSTED_PROXY_HOPS", "CORS_ORIGINS", "DATABASE_URL", "AUTHORIZED_PARTIES"} <= set(errors)
+    assert all("test@" not in error for error in errors)
+
+
+def test_production_config_checker_prints_variable_names_only(monkeypatch, capsys):
+    from scripts import check_production_config
+
+    monkeypatch.setenv("JARVIS_SKIP_DOTENV", "1")
+    monkeypatch.setenv("JARVIS_ENV", "development")
+    monkeypatch.setenv("DATABASE_URL", "synthetic-never-print-this")
+    assert check_production_config.main() == 1
+    output = capsys.readouterr().out
+    assert "Invalid or missing: JARVIS_ENV" in output
+    assert "synthetic-never-print-this" not in output
+
+
+def test_cors_and_trusted_proxy_values_are_exact_and_bounded(monkeypatch):
+    monkeypatch.setenv("CORS_ORIGINS", "https://jarvis.example.test/path")
+    with pytest.raises(RuntimeError, match="exact origins"):
+        configured_cors_origins()
+
+    app = Flask("invalid-proxy-hops-test")
+    monkeypatch.setenv("TRUSTED_PROXY_HOPS", "6")
+    with pytest.raises(RuntimeError, match="0 to 5"):
+        configure_proxy(app)
+
+
 def test_production_rejects_missing_or_weak_configuration(monkeypatch):
     monkeypatch.setenv("JARVIS_ENV", "production")
     monkeypatch.setenv("DB_BACKEND", "postgres")
@@ -273,7 +335,7 @@ def test_production_rejects_missing_or_weak_configuration(monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "1")
     monkeypatch.setenv("FLASK_SECRET", "weak")
     monkeypatch.setenv("CORS_ORIGINS", "https://jarvis.example.test")
-    monkeypatch.setenv("DATABASE_URL", "postgresql://pooler.invalid/db")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example@ep-test-pooler.invalid/neondb?sslmode=require")
     with pytest.raises(RuntimeError, match="FLASK_SECRET"):
         validate_production_config()
 
@@ -287,21 +349,21 @@ def test_production_rejects_missing_or_weak_configuration(monkeypatch):
     with pytest.raises(RuntimeError, match="DATABASE_URL"):
         validate_production_config()
 
-    monkeypatch.setenv("DATABASE_URL", "postgresql://pooler.invalid/db")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example@ep-test-pooler.invalid/neondb?sslmode=require")
     monkeypatch.setenv("AUTH_ENABLED", "0")
     with pytest.raises(RuntimeError, match="AUTH_ENABLED"):
         validate_production_config()
 
     monkeypatch.setenv("AUTH_ENABLED", "1")
-    monkeypatch.setenv("DATABASE_URL", "postgresql://pooler.invalid/db")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example@ep-test-pooler.invalid/neondb?sslmode=require")
     monkeypatch.setenv("CLERK_ISSUER", "https://clerk.example.test")
     monkeypatch.setenv("CLERK_JWKS_URL", "https://clerk.example.test/.well-known/jwks.json")
     monkeypatch.delenv("CLERK_AUTHORIZED_PARTIES", raising=False)
-    with pytest.raises(RuntimeError, match="CLERK_AUTHORIZED_PARTIES"):
+    with pytest.raises(RuntimeError, match="AUTHORIZED_PARTIES"):
         validate_production_config()
 
     monkeypatch.setenv("CLERK_AUTHORIZED_PARTIES", "http://jarvis.example.test")
-    with pytest.raises(RuntimeError, match="HTTPS origins"):
+    with pytest.raises(RuntimeError, match="AUTHORIZED_PARTIES"):
         validate_production_config()
 
     monkeypatch.setenv("CLERK_AUTHORIZED_PARTIES", "https://jarvis.example.test")
@@ -331,7 +393,7 @@ def test_production_requires_postgres_backend(monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "1")
     monkeypatch.setenv("FLASK_SECRET", "strong-test-secret-value-0123456789abcdef")
     monkeypatch.setenv("CORS_ORIGINS", "https://jarvis.example.test")
-    monkeypatch.setenv("DATABASE_URL", "configured")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example@ep-test-pooler.invalid/neondb?sslmode=require")
     monkeypatch.setenv("CLERK_ISSUER", "https://clerk.example.test")
     monkeypatch.setenv("CLERK_JWKS_URL", "https://clerk.example.test/.well-known/jwks.json")
     monkeypatch.setenv("CLERK_AUTHORIZED_PARTIES", "https://jarvis.example.test")
@@ -344,5 +406,5 @@ def test_production_requires_postgres_backend(monkeypatch):
 
     monkeypatch.setenv("SERVER_FALLBACK_KEYS", "0")
     monkeypatch.setenv("DB_BACKEND", "sqlite")
-    with pytest.raises(RuntimeError, match="DB_BACKEND=postgres"):
+    with pytest.raises(RuntimeError, match="DB_BACKEND"):
         validate_production_config()

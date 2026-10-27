@@ -1,0 +1,44 @@
+services:
+  - type: web
+    name: jarvis-api
+    runtime: python
+    rootDir: backend-cloud
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --config gunicorn.conf.py wsgi:app
+    healthCheckPath: /api/ping
+    plan: starter
+    envVars:
+      - key: JARVIS_ENV
+        value: production
+      - key: DB_BACKEND
+        value: postgres
+      - key: AUTH_MODE
+        value: clerk
+      - key: AUTH_ENABLED
+        value: "1"
+      - key: SERVER_FALLBACK_KEYS
+        value: "0"
+      - key: TRUSTED_PROXY_HOPS
+        value: "1"
+      - key: DATABASE_URL
+        sync: false
+      - key: API_KEY_ENCRYPTION_KEY
+        sync: false
+      - key: FLASK_SECRET
+        sync: false
+      - key: CLERK_ISSUER
+        sync: false
+      - key: CLERK_JWKS_URL
+        sync: false
+      - key: AUTHORIZED_PARTIES
+        sync: false
+      - key: ALLOWED_CLERK_SUBJECTS
+        sync: false
+      - key: CLERK_WEBHOOK_SECRET
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: LANDING_URL
+        sync: false
+      - key: ALLOW_ANY_CLERK_USER
+        sync: false

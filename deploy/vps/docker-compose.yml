@@ -1,0 +1,67 @@
+services:
+  backend:
+    build:
+      context: ../..
+      dockerfile: deploy/vps/Dockerfile
+    environment:
+      JARVIS_ENV: production
+      DB_BACKEND: postgres
+      PORT: "8000"
+      AUTH_MODE: clerk
+      AUTH_ENABLED: "1"
+      SERVER_FALLBACK_KEYS: "0"
+      TRUSTED_PROXY_HOPS: "1"
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+      API_KEY_ENCRYPTION_KEY: ${API_KEY_ENCRYPTION_KEY:?Set API_KEY_ENCRYPTION_KEY}
+      FLASK_SECRET: ${FLASK_SECRET:?Set FLASK_SECRET}
+      CLERK_ISSUER: ${CLERK_ISSUER:?Set CLERK_ISSUER}
+      CLERK_JWKS_URL: ${CLERK_JWKS_URL:?Set CLERK_JWKS_URL}
+      AUTHORIZED_PARTIES: ${AUTHORIZED_PARTIES:?Set AUTHORIZED_PARTIES}
+      ALLOWED_CLERK_SUBJECTS: ${ALLOWED_CLERK_SUBJECTS:?Set ALLOWED_CLERK_SUBJECTS}
+      CLERK_WEBHOOK_SECRET: ${CLERK_WEBHOOK_SECRET:?Set CLERK_WEBHOOK_SECRET}
+      CORS_ORIGINS: ${CORS_ORIGINS:?Set CORS_ORIGINS}
+      LANDING_URL: ${LANDING_URL:?Set LANDING_URL}
+    volumes:
+      - jarvis-data:/var/lib/jarvis
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  landing:
+    build:
+      context: ../..
+      dockerfile: deploy/vps/Dockerfile.landing
+      args:
+        NEXT_PUBLIC_BACKEND_URL: ${NEXT_PUBLIC_BACKEND_URL:?Set NEXT_PUBLIC_BACKEND_URL}
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?Set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:?Set NEXT_PUBLIC_SITE_URL}
+        NEXT_PUBLIC_DOWNLOAD_URL: ${NEXT_PUBLIC_DOWNLOAD_URL:-}
+        NEXT_PUBLIC_DOWNLOAD_VERSION: ${NEXT_PUBLIC_DOWNLOAD_VERSION:-}
+        NEXT_PUBLIC_DOWNLOAD_SHA256: ${NEXT_PUBLIC_DOWNLOAD_SHA256:-}
+    expose:
+      - "3000"
+    environment:
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:?Set CLERK_SECRET_KEY}
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    environment:
+      JARVIS_DOMAIN: ${JARVIS_DOMAIN:?Set JARVIS_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - backend
+      - landing
+    restart: unless-stopped
+
+volumes:
+  jarvis-data:
+  caddy-data:
+  caddy-config:

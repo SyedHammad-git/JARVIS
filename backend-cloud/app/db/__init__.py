@@ -307,7 +307,11 @@ def _postgres_url(variable: str = "DATABASE_URL") -> str:
     if parsed.scheme not in ("postgres", "postgresql") or not parsed.hostname:
         raise ValueError(f"{variable} must be a PostgreSQL URL")
     is_pooler = "-pooler" in parsed.hostname.lower()
-    if variable == "DATABASE_URL" and not is_pooler:
+    local_smoke = (
+        os.environ.get("JARVIS_SMOKE_TEST") == "1"
+        and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+    )
+    if variable == "DATABASE_URL" and not (is_pooler or local_smoke):
         raise ValueError("DATABASE_URL must use the Neon pooled endpoint")
     if variable == "DATABASE_URL_DIRECT" and is_pooler:
         raise ValueError("DATABASE_URL_DIRECT must use the direct endpoint")

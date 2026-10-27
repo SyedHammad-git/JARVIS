@@ -7,12 +7,18 @@ from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
-try:
-    from dotenv import load_dotenv
-    if os.environ.get("JARVIS_SKIP_DOTENV") != "1":
-        load_dotenv(BACKEND_DIR / ".env", override=False)
-except ImportError:
-    pass
+
+def load_backend_environment() -> None:
+    if os.environ.get("JARVIS_SKIP_DOTENV") == "1":
+        return
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    load_dotenv(BACKEND_DIR / ".env", override=False)
+
+
+load_backend_environment()
 
 def _load_database():
     from app import db
