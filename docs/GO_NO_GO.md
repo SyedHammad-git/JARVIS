@@ -11,8 +11,8 @@
 | Phase 3 source tests and download UI | PASS | Phase 3 commit `49d516f`; build-pipeline follow-up `0fd8488e598ad60da4503d1b782560f761e480e0`. Landing unit tests: `20 passed`; Playwright: `5 passed`. |
 | Phase 3 production installer | MANUAL | The existing `client-electron/release/JARVIS-Device-Client-Setup-18.0.0.exe` was built before `BACKEND_URL` was embedded. Do not upload it. `npm run dist` now requires a valid `BACKEND_URL`; it was empty, so the guard stopped before electron-builder. Rebuild with the production HTTPS API origin, then verify/upload its checksum. |
 | Phase 4 owner data isolation | PASS | Commit `40f9e596c8353c1080c0fda607fa290aef359794`, tag `f1-p4-done`; owner-scoped migrations, queries, caches, webhook purge, and isolation tests pass. |
-| Phase 5 Neon migration dry-run counts | FAIL / BLOCKED | Preparation commit `2286dbcab467a64cdcd62c062605960e4fee6a8d` adds explicit dotenv loading and a safe probe. No counts were produced: the supplied `DATABASE_URL_DIRECT` host is a pooler and the migration refused before connecting with `ValueError`. A direct development endpoint is required. No real migration was run. |
-| Phase 5 pooled connection / `channel_binding` | MANUAL | The safe probe reported `DATABASE_URL=EMPTY`; no pooled connection was attempted, so there is no connection result class and no channel-binding conclusion. |
+| Phase 5 Neon migration dry-run counts | PASS (dry-run only) | Preparation commit `2286dbcab467a64cdcd62c062605960e4fee6a8d` adds explicit dotenv loading and a safe probe. The console-confirmed dev branch dry-run returned zero rows before and after for every table below; no schema changes were applied. Real migration remains blocked until the operator explicitly says `go real migration`. |
+| Phase 5 pooled connection / `channel_binding` | PASS | `LIBPQ_VERSION=180003`; raw probe result: `POOL_CONNECTION=OK` with `channel_binding` unchanged. |
 | Phase 6 production hardening and files | PASS | Commit `59778b9d539ad57e72325ebab4b1634b71440bba`, tag `f1-p6-done`; final backend suite passes, deployment YAML parses, no `shell=True`/`sys.path` hacks found. |
 | Phase 6 Docker/WSL container smoke | MANUAL | Docker is unavailable and WSL is not installed. Exact loopback-only Linux commands are in [docs/DEPLOY.md](docs/DEPLOY.md). |
 | Phase 7 backend tests | PASS | Raw summary: `189 passed`. Includes idle DB, health, retry/fallback, pair-code, owner isolation, registry, prompt defense, and the headless pair-code → open_app → notify → mocked-snapshot flow through `/api/agent`. |
@@ -25,11 +25,38 @@
 
 ## Manual Steps Still Required
 
-1. Rotate the Neon credential shared in chat. Set `DATABASE_URL` to the confirmed branch's pooled URL and `DATABASE_URL_DIRECT` to its **direct** development endpoint in your local secret store. Do not paste either value into chat.
-2. From `backend-cloud`, run `python -m tools_dev.migrate_neon --dry-run` and review the per-table counts. No migration write may occur until you explicitly say `go real migration`.
-3. Set a valid pooled `DATABASE_URL` locally and run `python -m scripts.check_neon_connection`. It reports only libpq version and `OK`, `auth`, `network`, or `channel_binding`. If it reports `channel_binding`, remove the `channel_binding` URL parameter and retry the probe.
-4. Configure Clerk production, Neon, Vercel, and Render/VPS variables as listed in [docs/DEPLOY.md](docs/DEPLOY.md); restrict sign-ups and populate `ALLOWED_CLERK_SUBJECTS` with `clerk:<subject-id>` values.
-5. Set the production `BACKEND_URL` in the Windows build environment, run `npm run dist` from `client-electron`, verify the `.exe.sha256`, upload both files to GitHub Releases, then set `NEXT_PUBLIC_DOWNLOAD_URL`, `NEXT_PUBLIC_DOWNLOAD_VERSION`, and `NEXT_PUBLIC_DOWNLOAD_SHA256` in the landing build environment.
-6. Run the loopback smoke test on a Linux host with Docker/WSL or the documented local service commands; no public test ports are needed.
-7. Run Gitleaks with the repository config, then complete the live WSS pairing, device notification, mocked/approved snapshot, revocation, and camera-off checks before deployment.
-8. Confirm or supply the missing historical Phase 0–2 acceptance outputs if those phases must be certified under the commit + tag + acceptance-output rule. Their commits and tags exist; this session has no recorded acceptance results for them.
+1. Say `go real migration` only after deciding the reviewed dev-branch dry-run counts are correct. No real Neon DDL has been run.
+2. Rotate the Neon credential shared in chat before production use. Keep the replacement in the local secret store; do not paste it into chat.
+3. Configure Clerk production, Neon, Vercel, and Render/VPS variables as listed in [docs/DEPLOY.md](docs/DEPLOY.md); restrict sign-ups and populate `ALLOWED_CLERK_SUBJECTS` with `clerk:<subject-id>` values.
+4. Set the production `BACKEND_URL` in the Windows build environment, run `npm run dist` from `client-electron`, verify the `.exe.sha256`, upload both files to GitHub Releases, then set `NEXT_PUBLIC_DOWNLOAD_URL`, `NEXT_PUBLIC_DOWNLOAD_VERSION`, and `NEXT_PUBLIC_DOWNLOAD_SHA256` in the landing build environment.
+5. Run the loopback smoke test on a Linux host; local Docker is unavailable and WSL is not installed. No public test ports are needed.
+6. Run Gitleaks with the repository config, then complete the live WSS pairing, device notification, approved snapshot, revocation, and camera-off checks before deployment.
+7. Confirm or supply the missing historical Phase 0–2 acceptance outputs if those phases must be certified under the commit + tag + acceptance-output rule. Their commits and tags exist; this session has no recorded phase-specific acceptance results.
+
+## Neon Dev Dry-Run Counts
+
+| Table | Before | After |
+| --- | ---: | ---: |
+| conversations | 0 | 0 |
+| notes | 0 | 0 |
+| alarms | 0 | 0 |
+| command_log | 0 | 0 |
+| events | 0 | 0 |
+| config | 0 | 0 |
+| memory_facts | 0 | 0 |
+| heartbeat_log | 0 | 0 |
+| session_stats | 0 | 0 |
+| cameras | 0 | 0 |
+| smarthome_devices | 0 | 0 |
+| monitors | 0 | 0 |
+| monitor_log | 0 | 0 |
+| users | 0 | 0 |
+| devices | 0 | 0 |
+| user_api_keys | 0 | 0 |
+| discord_settings | 0 | 0 |
+| pairing_codes | 0 | 0 |
+| pending_confirmations | 0 | 0 |
+| pair_code_rate_limits | 0 | 0 |
+| user_owners | 0 | 0 |
+| snapshots | 0 | 0 |
+| memory_vectors | 0 | 0 |
