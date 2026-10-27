@@ -19,6 +19,7 @@ vi.mock("next/navigation", () => ({
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllEnvs();
   window.localStorage.removeItem("jarvis-theme");
   delete document.documentElement.dataset.theme;
   vi.clearAllMocks();
@@ -27,6 +28,9 @@ afterEach(() => {
 beforeEach(() => {
   auth.isLoaded = true;
   auth.isSignedIn = false;
+  vi.stubEnv("NEXT_PUBLIC_DOWNLOAD_URL", "");
+  vi.stubEnv("NEXT_PUBLIC_DOWNLOAD_VERSION", "");
+  vi.stubEnv("NEXT_PUBLIC_DOWNLOAD_SHA256", "");
 });
 
 describe("landing page", () => {
@@ -37,6 +41,8 @@ describe("landing page", () => {
     expect(screen.getByText(/Bring your own provider key/)).toBeInTheDocument();
     expect(screen.getByText(/Illustrative preview — not a live connection/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Download for Windows" })).toHaveAttribute("href", "/download");
+    expect(screen.getByRole("button", { name: "Coming soon" })).toBeDisabled();
+    expect(screen.getByRole("heading", { name: /Bring your PC/ }).parentElement).toHaveTextContent("Version not published · SHA-256: not published");
 
     const featureRegion = screen.getByRole("region", { name: "Useful connections.Clear controls." });
     expect(within(featureRegion).getAllByRole("article")).toHaveLength(4);
@@ -60,6 +66,20 @@ describe("landing page", () => {
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
     expect(window.localStorage.getItem("jarvis-theme")).toBe("dark");
     expect(screen.getByRole("button", { name: "Switch to light theme" })).toBeInTheDocument();
+  });
+
+  it("uses the configured release URL, version, and checksum in the home download section", () => {
+    const releaseUrl = "https://github.com/SyedHammad-git/JARVIS/releases/download/v18.0.0/JARVIS-Device-Client-Setup-18.0.0.exe";
+    const checksum = "b".repeat(64);
+    vi.stubEnv("NEXT_PUBLIC_DOWNLOAD_URL", releaseUrl);
+    vi.stubEnv("NEXT_PUBLIC_DOWNLOAD_VERSION", "18.0.0");
+    vi.stubEnv("NEXT_PUBLIC_DOWNLOAD_SHA256", checksum);
+
+    render(<HomePage />);
+
+    expect(screen.getByRole("link", { name: "Download JARVIS for Windows" })).toHaveAttribute("href", releaseUrl);
+    expect(screen.getByRole("heading", { name: /Bring your PC/ }).parentElement).toHaveTextContent(`Version 18.0.0 · SHA-256: ${checksum}`);
+    expect(screen.getByText(/Unsigned builds may trigger Windows SmartScreen/)).toBeInTheDocument();
   });
 
   it("opens Clerk sign-in for a signed-out Try JARVIS action and redirects after sign-in", () => {

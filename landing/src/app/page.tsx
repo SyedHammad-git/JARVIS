@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { SiteHeader } from "@/components/SiteHeader";
 import { AuthAction } from "@/components/AuthAction";
+import { getDownloadRelease } from "@/lib/download";
 
 const features = [
   {
@@ -72,6 +73,12 @@ function ConnectionFlow() {
 }
 
 export default function HomePage() {
+  const release = getDownloadRelease(
+    process.env.NEXT_PUBLIC_DOWNLOAD_URL,
+    process.env.NEXT_PUBLIC_DOWNLOAD_VERSION,
+    process.env.NEXT_PUBLIC_DOWNLOAD_SHA256,
+  );
+
   return (
     <>
       <SiteHeader />
@@ -148,7 +155,16 @@ export default function HomePage() {
               <p className="section-kicker">READY WHEN YOU ARE</p>
               <h2 id="download-title">Bring your PC<br />into the conversation.</h2>
               <p className="muted">Install the Windows desktop app, pair it with your account, and keep it running when you want to use desktop actions.</p>
-              <Link className="button-primary" href="/download">Get JARVIS for Windows <span aria-hidden="true">↓</span></Link>
+              <div className="mt-5 flex flex-wrap items-center gap-3">
+                {release.url ? (
+                  <a className="button-primary" href={release.url} target="_blank" rel="noreferrer">Download JARVIS for Windows <span aria-hidden="true">↓</span></a>
+                ) : (
+                  <button className="button-primary opacity-60" type="button" disabled>Coming soon</button>
+                )}
+                <Link href="/download" className="text-link">Installation details</Link>
+              </div>
+              <p className="muted mt-4 text-sm">{release.version ? `Version ${release.version}` : "Version not published"} · SHA-256: <span className="break-all font-mono">{release.sha256 || "not published"}</span></p>
+              {release.url && <p className="muted mt-2 text-sm">Unsigned builds may trigger Windows SmartScreen; verify the checksum before installing.</p>}
             </div>
             <ol className="install-steps">
               <li><span>01</span><div><b>Download</b><p>Get the current Windows installer from the download page.</p></div></li>

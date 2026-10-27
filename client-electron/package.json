@@ -9,7 +9,7 @@
     "dev": "set JARVIS_DEV=1&& electron .",
     "test": "node --test test/client.test.js",
     "test:camera": "jest --runInBand test/jest/camera.spec.js",
-    "dist": "electron-builder --win nsis"
+    "dist": "electron-builder --win nsis && powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/checksum.ps1"
   },
   "dependencies": {
     "socket.io-client": "4.8.4"
@@ -21,7 +21,7 @@
   },
   "build": {
     "appId": "com.jarvis.deviceclient",
-    "productName": "JARVIS Device Client",
+    "productName": "JARVIS",
     "directories": {
       "output": "release"
     },
@@ -36,7 +36,9 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "allowElevation": false
     }
   }
 }

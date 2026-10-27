@@ -9,6 +9,7 @@ describe("Windows download page", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.stubEnv("NEXT_PUBLIC_DOWNLOAD_URL", releaseUrl);
+    vi.stubEnv("NEXT_PUBLIC_DOWNLOAD_VERSION", "18.0.0");
     vi.stubEnv("NEXT_PUBLIC_DOWNLOAD_SHA256", checksum);
   });
 
@@ -29,6 +30,7 @@ describe("Windows download page", () => {
     expect(link).toHaveAttribute("href", releaseUrl);
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noreferrer");
+    expect(screen.getByText("Version 18.0.0")).toBeInTheDocument();
     expect(screen.getByLabelText("SHA-256 checksum")).toHaveTextContent(checksum);
   });
 
@@ -37,11 +39,21 @@ describe("Windows download page", () => {
     vi.stubEnv("NEXT_PUBLIC_DOWNLOAD_SHA256", "not-a-checksum");
     await renderPage();
 
-    expect(screen.getByRole("link", { name: "Download unavailable" })).toHaveAttribute("href", "/docs/connect");
+    expect(screen.getByRole("button", { name: "Coming soon" })).toBeDisabled();
+    expect(screen.queryByRole("link", { name: "Download installer" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("alert").map((alert) => alert.textContent)).toEqual(expect.arrayContaining([
       expect.stringContaining("HTTPS GitHub Release asset URL"),
       expect.stringContaining("64 hexadecimal characters"),
     ]));
+    expect(screen.getByLabelText("SHA-256 checksum")).toHaveTextContent("Checksum not published yet.");
+  });
+
+  it("shows a coming-soon control when no release URL is configured", async () => {
+    vi.stubEnv("NEXT_PUBLIC_DOWNLOAD_URL", "");
+    vi.stubEnv("NEXT_PUBLIC_DOWNLOAD_SHA256", "");
+    await renderPage();
+
+    expect(screen.getByRole("button", { name: "Coming soon" })).toBeDisabled();
     expect(screen.getByLabelText("SHA-256 checksum")).toHaveTextContent("Checksum not published yet.");
   });
 });
