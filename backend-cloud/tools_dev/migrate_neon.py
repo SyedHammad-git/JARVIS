@@ -27,12 +27,13 @@ def _statements(schema: str):
 
 def _schemas():
     owner_migration = "\n".join(
-        f"ALTER TABLE IF EXISTS {table} "
-        "ADD COLUMN IF NOT EXISTS owner_username TEXT NOT NULL DEFAULT '';"
-        for table in (
-            "conversations", "notes", "alarms", "command_log", "events",
-            "memory_facts", "monitors", "monitor_log", "snapshots", "memory_vectors",
-            "heartbeat_log", "session_stats", "cameras",
+        statement
+        for table in database.OWNER_SCOPED_TABLES
+        for statement in (
+            f"ALTER TABLE IF EXISTS {table} "
+            "ADD COLUMN IF NOT EXISTS owner_username TEXT NOT NULL DEFAULT '';",
+            f"UPDATE {table} SET owner_username='' WHERE owner_username IS NULL;",
+            f"ALTER TABLE IF EXISTS {table} ALTER COLUMN owner_username SET NOT NULL;",
         )
     )
     return (

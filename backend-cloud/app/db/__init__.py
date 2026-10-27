@@ -33,6 +33,15 @@ DB_PATH  : Path = DATA_DIR / "jarvis.db"
 
 DB_BACKEND: str = os.environ.get("DB_BACKEND", "sqlite").lower().strip()
 SQLITE_FALLBACK_ACTIVE = False
+OWNER_SCOPED_TABLES = (
+    "conversations", "notes", "alarms", "command_log", "events",
+    "memory_facts", "monitors", "monitor_log", "snapshots", "memory_vectors",
+    "heartbeat_log", "session_stats", "cameras", "devices", "user_api_keys",
+    "pairing_codes", "pending_confirmations", "smarthome_devices", "discord_settings",
+)
+SQLITE_OWNER_SCOPED_TABLES = tuple(
+    table for table in OWNER_SCOPED_TABLES if table not in {"snapshots", "memory_vectors"}
+)
 
 # ════════════════════════════════════════════════════════════════════
 # SCHEMA — shared logical schema; SQLite and Postgres use converted forms
@@ -145,6 +154,17 @@ CREATE TABLE IF NOT EXISTS cameras (
     active INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS smarthome_devices (
+    owner_username TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    state INTEGER NOT NULL DEFAULT 0,
+    type TEXT NOT NULL DEFAULT 'switch',
+    icon TEXT NOT NULL DEFAULT '',
+    room TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (owner_username, device_id)
+);
+
 -- Monitors (url/timeout stored in config JSON)
 CREATE TABLE IF NOT EXISTS monitors (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -204,6 +224,13 @@ CREATE TABLE IF NOT EXISTS user_api_keys (
     PRIMARY KEY (owner_username, provider)
 );
 
+CREATE TABLE IF NOT EXISTS discord_settings (
+    owner_username TEXT PRIMARY KEY,
+    webhook_url TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS pairing_codes (
     code_hash      TEXT PRIMARY KEY,
     owner_username TEXT NOT NULL,
@@ -231,7 +258,8 @@ CREATE TABLE IF NOT EXISTS pair_code_rate_limits (
 );
 
 CREATE TABLE IF NOT EXISTS user_owners (
-    owner_username TEXT PRIMARY KEY
+    owner_username TEXT PRIMARY KEY,
+    smarthome_initialized INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -335,10 +363,16 @@ _REQUIRED_COLUMNS: dict[str, list[tuple]] = {
     "monitor_log":  [("owner_username", "TEXT", "''")],
     "devices":      [("owner_username", "TEXT", "''"),
                      ("scopes", "TEXT", "'{}'")],
-    "user_api_keys": [("key_version", "INTEGER", "1"),
+    "user_api_keys": [("owner_username", "TEXT", "''"),
+                      ("key_version", "INTEGER", "1"),
                       ("last4", "TEXT", "''"),
                       ("status", "TEXT", "'saved'"),
                       ("last_tested_at", "TEXT", "''")],
+    "pairing_codes": [("owner_username", "TEXT", "''")],
+    "pending_confirmations": [("owner_username", "TEXT", "''")],
+    "smarthome_devices": [("owner_username", "TEXT", "''")],
+    "discord_settings": [("owner_username", "TEXT", "''")],
+    "user_owners": [("smarthome_initialized", "INTEGER", "0")],
 }
 
 # legacy column names that may hold timestamp data in old DBs
@@ -401,20 +435,14 @@ def _sqlite_migrate(conn: sqlite3.Connection) -> None:
                         f"WHERE {col_name} IS NULL OR {col_name} = ''"
                     )
 
-    for table in ("devices", "user_api_keys", "pairing_codes", "pending_confirmations",
-                  "conversations", "notes", "alarms", "command_log", "events",
-                  "memory_facts", "monitors", "monitor_log", "heartbeat_log",
-                  "session_stats", "cameras"):
+    for table in SQLITE_OWNER_SCOPED_TABLES:
+        conn.execute(f"UPDATE {table} SET owner_username='' WHERE owner_username IS NULL")
         conn.execute(
             f"UPDATE {table} SET owner_username='clerk:' || owner_username "
             f"WHERE owner_username<>'' AND owner_username NOT LIKE 'clerk:%' "
             f"AND NOT EXISTS (SELECT 1 FROM users WHERE users.username={table}.owner_username)"
         )
-    for table in (
-        "conversations", "notes", "alarms", "memory_facts", "monitors",
-        "monitor_log", "command_log", "events", "heartbeat_log", "session_stats",
-        "cameras", "devices", "user_api_keys", "pairing_codes", "pending_confirmations",
-    ):
+    for table in SQLITE_OWNER_SCOPED_TABLES:
         conn.execute(
             f"INSERT OR IGNORE INTO user_owners(owner_username) "
             f"SELECT DISTINCT owner_username FROM {table} WHERE owner_username<>''"
@@ -650,20 +678,16 @@ def _postgres_init() -> None:
                     "disabled INTEGER NOT NULL DEFAULT 0)"
                 )
                 cur.execute(
-                    "CREATE TABLE IF NOT EXISTS user_owners (owner_username TEXT PRIMARY KEY)"
+                    "CREATE TABLE IF NOT EXISTS user_owners ("
+                    "owner_username TEXT PRIMARY KEY, smarthome_initialized INTEGER NOT NULL DEFAULT 0)"
+                )
+                cur.execute(
+                    "ALTER TABLE user_owners ADD COLUMN IF NOT EXISTS "
+                    "smarthome_initialized INTEGER NOT NULL DEFAULT 0"
                 )
                 cur.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS owner_username TEXT NOT NULL DEFAULT ''")
                 cur.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS scopes TEXT NOT NULL DEFAULT '{}'")
-                for table in (
-                    "conversations", "notes", "alarms", "command_log", "events",
-                    "memory_facts", "monitors", "monitor_log", "heartbeat_log",
-                    "session_stats", "cameras",
-                ):
-                    cur.execute(
-                        f"ALTER TABLE IF EXISTS {table} "
-                        "ADD COLUMN IF NOT EXISTS owner_username TEXT NOT NULL DEFAULT ''"
-                    )
-                for table in ("snapshots", "memory_vectors"):
+                for table in OWNER_SCOPED_TABLES:
                     cur.execute(
                         f"ALTER TABLE IF EXISTS {table} "
                         "ADD COLUMN IF NOT EXISTS owner_username TEXT NOT NULL DEFAULT ''"
@@ -676,10 +700,23 @@ def _postgres_init() -> None:
                     "last_tested_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL, "
                     "PRIMARY KEY (owner_username, provider))"
                 )
+                cur.execute(
+                    "CREATE TABLE IF NOT EXISTS discord_settings ("
+                    "owner_username TEXT PRIMARY KEY, webhook_url TEXT NOT NULL DEFAULT '', "
+                    "enabled INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '')"
+                )
+                cur.execute(
+                    "CREATE TABLE IF NOT EXISTS smarthome_devices ("
+                    "owner_username TEXT NOT NULL, device_id TEXT NOT NULL, name TEXT NOT NULL, "
+                    "state INTEGER NOT NULL DEFAULT 0, type TEXT NOT NULL DEFAULT 'switch', "
+                    "icon TEXT NOT NULL DEFAULT '', room TEXT NOT NULL DEFAULT '', "
+                    "PRIMARY KEY (owner_username, device_id))"
+                )
                 cur.execute("ALTER TABLE user_api_keys ADD COLUMN IF NOT EXISTS key_version INTEGER NOT NULL DEFAULT 1")
                 cur.execute("ALTER TABLE user_api_keys ADD COLUMN IF NOT EXISTS last4 TEXT NOT NULL DEFAULT ''")
                 cur.execute("ALTER TABLE user_api_keys ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'saved'")
                 cur.execute("ALTER TABLE user_api_keys ADD COLUMN IF NOT EXISTS last_tested_at TEXT NOT NULL DEFAULT ''")
+                cur.execute("ALTER TABLE user_api_keys ADD COLUMN IF NOT EXISTS owner_username TEXT NOT NULL DEFAULT ''")
                 cur.execute(
                     "CREATE TABLE IF NOT EXISTS pairing_codes ("
                     "code_hash TEXT PRIMARY KEY, owner_username TEXT NOT NULL, "
@@ -691,6 +728,15 @@ def _postgres_init() -> None:
                     "nonce_hash TEXT NOT NULL, message TEXT NOT NULL, "
                     "tool_signature TEXT NOT NULL, expires_at DOUBLE PRECISION NOT NULL, "
                     "PRIMARY KEY (owner_username, session_id))"
+                )
+                cur.execute("ALTER TABLE pairing_codes ADD COLUMN IF NOT EXISTS owner_username TEXT NOT NULL DEFAULT ''")
+                cur.execute("ALTER TABLE pending_confirmations ADD COLUMN IF NOT EXISTS owner_username TEXT NOT NULL DEFAULT ''")
+                cur.execute(
+                    "CREATE TABLE IF NOT EXISTS smarthome_devices ("
+                    "owner_username TEXT NOT NULL, device_id TEXT NOT NULL, name TEXT NOT NULL, "
+                    "state INTEGER NOT NULL DEFAULT 0, type TEXT NOT NULL DEFAULT 'switch', "
+                    "icon TEXT NOT NULL DEFAULT '', room TEXT NOT NULL DEFAULT '', "
+                    "PRIMARY KEY (owner_username, device_id))"
                 )
                 cur.execute(
                     "CREATE TABLE IF NOT EXISTS pair_code_rate_limits ("
@@ -706,26 +752,18 @@ def _postgres_init() -> None:
                 )
                 cur.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS owner_username TEXT NOT NULL DEFAULT ''")
                 cur.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS scopes TEXT NOT NULL DEFAULT '{}'")
-                for table in (
-                    "devices", "user_api_keys", "pairing_codes", "pending_confirmations",
-                    "conversations", "notes", "alarms", "command_log", "events",
-                    "memory_facts", "monitors", "monitor_log", "snapshots", "memory_vectors",
-                    "heartbeat_log", "session_stats", "cameras",
-                ):
+                for table in OWNER_SCOPED_TABLES:
                     cur.execute("SELECT to_regclass(%s)", (f"public.{table}",))
                     if not cur.fetchone()[0]:
                         continue
+                    cur.execute(f"UPDATE {table} SET owner_username='' WHERE owner_username IS NULL")
+                    cur.execute(f"ALTER TABLE {table} ALTER COLUMN owner_username SET NOT NULL")
                     cur.execute(
                         f"UPDATE {table} SET owner_username='clerk:' || owner_username "
                         f"WHERE owner_username<>'' AND owner_username NOT LIKE 'clerk:%' "
                         f"AND NOT EXISTS (SELECT 1 FROM users WHERE users.username={table}.owner_username)"
                     )
-                for table in (
-                    "conversations", "notes", "alarms", "memory_facts", "monitors",
-                    "monitor_log", "command_log", "events", "heartbeat_log", "session_stats",
-                    "cameras", "devices", "user_api_keys", "pairing_codes",
-                    "pending_confirmations", "snapshots", "memory_vectors",
-                ):
+                for table in OWNER_SCOPED_TABLES:
                     cur.execute("SELECT to_regclass(%s)", (f"public.{table}",))
                     if not cur.fetchone()[0]:
                         continue

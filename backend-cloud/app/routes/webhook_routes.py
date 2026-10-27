@@ -60,7 +60,7 @@ def _purge_clerk_user(owner_username: str) -> None:
             "conversations", "notes", "alarms", "memory_facts", "monitors",
             "monitor_log", "command_log", "events", "heartbeat_log", "session_stats",
             "cameras", "user_api_keys", "devices", "user_owners",
-            "pairing_codes", "pending_confirmations",
+            "pairing_codes", "pending_confirmations", "smarthome_devices", "discord_settings",
         )
     ]
     if DB_BACKEND == "postgres":

@@ -101,17 +101,17 @@ def test_device_revoke_invalidates_cache_and_call_device_refuses_immediately(mon
         "scopes": '{"allow_open_app": true}',
     }
     monkeypatch.setattr(pairing, "db_read", lambda _sql, _params: read_count.append(True) or [dict(row)])
-    monkeypatch.setattr(pairing, "get_device", lambda _device_id: dict(row))
+    monkeypatch.setattr(pairing, "get_device", lambda _device_id, _owner=None: dict(row))
     monkeypatch.setattr(pairing, "db_write", lambda _sql, _params: True)
     monkeypatch.setattr(gateway, "disconnect_device", Mock())
     monkeypatch.setattr(gateway, "socketio", Mock())
     pairing.invalidate_device_status_cache("dev-cache-test")
 
-    assert pairing.get_device_status_cached("dev-cache-test")["revoked"] == 0
+    assert pairing.get_device_status_cached("dev-cache-test", "owner")["revoked"] == 0
     assert len(read_count) == 1
     row["revoked"] = 1
-    assert pairing.revoke_device("dev-cache-test")
-    assert pairing.get_device_status_cached("dev-cache-test")["revoked"] == 1
+    assert pairing.revoke_device("dev-cache-test", "owner")
+    assert pairing.get_device_status_cached("dev-cache-test", "owner")["revoked"] == 1
     assert len(read_count) == 1
     assert gateway.call_device(
         "dev-cache-test",
@@ -129,12 +129,12 @@ def test_device_status_cache_requeries_only_after_sixty_seconds(monkeypatch):
     monkeypatch.setattr(pairing, "db_read", lambda _sql, _params: reads.append(True) or [dict(row)])
     pairing.invalidate_device_status_cache("dev-ttl-test")
 
-    assert pairing.get_device_status_cached("dev-ttl-test")["revoked"] == 0
+    assert pairing.get_device_status_cached("dev-ttl-test", "owner")["revoked"] == 0
     now[0] += 59
-    assert pairing.get_device_status_cached("dev-ttl-test")["revoked"] == 0
+    assert pairing.get_device_status_cached("dev-ttl-test", "owner")["revoked"] == 0
     assert len(reads) == 1
     now[0] += 1
-    assert pairing.get_device_status_cached("dev-ttl-test")["revoked"] == 0
+    assert pairing.get_device_status_cached("dev-ttl-test", "owner")["revoked"] == 0
     assert len(reads) == 2
 
 
@@ -147,7 +147,7 @@ def test_device_status_endpoint_reports_online_state_without_execution_mode(monk
     app = Flask("device-status-cache-test")
     app.register_blueprint(devices_http.devices_bp)
     monkeypatch.setattr(devices_http, "DEVICE_ID", "dev-status-test")
-    monkeypatch.setattr(devices_http, "get_device", lambda _device_id: {
+    monkeypatch.setattr(devices_http, "get_device", lambda _device_id, _owner=None: {
         "device_id": "dev-status-test",
         "owner_username": "status-owner",
         "token_hash": "test-hash",

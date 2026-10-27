@@ -136,3 +136,16 @@ def test_migration_cli_connects_only_to_direct_url(monkeypatch):
     assert urlsplit(connect_urls[0]).hostname == "ep-dev.neon.tech"
     assert parse_qs(urlsplit(connect_urls[0]).query)["sslmode"] == ["require"]
     assert connection.closed
+
+
+def test_neon_migration_adds_owner_column_to_every_scoped_table():
+    migration_schema = migration._schemas()[-1]
+    base_schema = migration._schemas()[0]
+
+    assert "CREATE TABLE IF NOT EXISTS smarthome_devices" in base_schema
+    assert "CREATE TABLE IF NOT EXISTS discord_settings" in base_schema
+
+    for table in database.OWNER_SCOPED_TABLES:
+        assert f"ALTER TABLE IF EXISTS {table} " in migration_schema
+        assert f"UPDATE {table} SET owner_username='' WHERE owner_username IS NULL;" in migration_schema
+        assert f"ALTER TABLE IF EXISTS {table} ALTER COLUMN owner_username SET NOT NULL;" in migration_schema

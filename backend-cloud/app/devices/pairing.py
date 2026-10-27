@@ -26,7 +26,7 @@ DEVICE_STATUS_CACHE_TTL = 60
 PAIR_CODE_TTL_SECONDS = 600
 PAIR_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 _device_status_cache_lock = Lock()
-_device_status_cache: dict[str, tuple[dict | None, float]] = {}
+_device_status_cache: dict[tuple[str, str], tuple[dict | None, float]] = {}
 
 
 def hash_token(token: str) -> str:
@@ -35,8 +35,8 @@ def hash_token(token: str) -> str:
 
 def create_pair_code(owner_username: str, name: str = "PC") -> tuple[str, float]:
     db_write(
-        "DELETE FROM pairing_codes WHERE owner_username=? OR expires_at<=?",
-        (owner_username, time.time()),
+        "DELETE FROM pairing_codes WHERE owner_username=?",
+        (owner_username,),
     )
     for _ in range(5):
         code = "".join(secrets.choice(PAIR_CODE_ALPHABET) for _ in range(8))
@@ -52,15 +52,6 @@ def create_pair_code(owner_username: str, name: str = "PC") -> tuple[str, float]
 
 def redeem_pair_code(code: str) -> tuple[str, str, str] | None:
     supplied_hash = hash_token(code)
-    candidate_hashes = db_read(
-        "SELECT code_hash FROM pairing_codes WHERE expires_at>?",
-        (time.time(),),
-    )
-    matches = False
-    for candidate in candidate_hashes:
-        matches = hmac.compare_digest(str(candidate["code_hash"]), supplied_hash) or matches
-    if not matches:
-        return None
     rows = db_write_returning(
         "DELETE FROM pairing_codes WHERE code_hash=? AND expires_at>? RETURNING owner_username,name",
         (supplied_hash, time.time()),
@@ -148,54 +139,74 @@ def device_scope_allows(device: dict, action: str, args: dict | None = None) -> 
     return scopes.get(scope_name) is True
 
 
-def get_device(device_id: str) -> dict | None:
+def get_device(device_id: str, owner_username: str | None = None) -> dict | None:
+    owner_filter = " AND owner_username=?" if owner_username is not None else ""
+    params = (device_id, owner_username) if owner_username is not None else (device_id,)
     rows = db_read(
         "SELECT device_id, name, token_hash, owner_username, scopes, revoked, created_at, last_seen "
-        "FROM devices WHERE device_id=?",
-        (device_id,),
+        f"FROM devices WHERE device_id=?{owner_filter}",
+        params,
     )
     return rows[0] if rows else None
 
 
-def get_device_status_cached(device_id: str) -> dict | None:
+def get_device_status_cached(
+    device_id: str, owner_username: str
+) -> dict | None:
+    cache_key = (owner_username, device_id)
     now = time.monotonic()
     with _device_status_cache_lock:
-        cached = _device_status_cache.get(device_id)
+        cached = _device_status_cache.get(cache_key)
         if cached and now - cached[1] < DEVICE_STATUS_CACHE_TTL:
             return dict(cached[0]) if cached[0] is not None else None
     rows = db_read(
-        "SELECT device_id, revoked FROM devices WHERE device_id=?",
-        (device_id,),
+        "SELECT device_id, revoked FROM devices WHERE device_id=? AND owner_username=?",
+        (device_id, owner_username),
     )
     row = rows[0] if rows else None
     with _device_status_cache_lock:
-        _device_status_cache[device_id] = (dict(row) if row else None, now)
+        _device_status_cache[cache_key] = (dict(row) if row else None, now)
     return dict(row) if row else None
 
 
-def invalidate_device_status_cache(device_id: str, revoked: bool | None = None) -> None:
+def invalidate_device_status_cache(
+    device_id: str,
+    revoked: bool | None = None,
+    owner_username: str | None = None,
+) -> None:
     with _device_status_cache_lock:
         if revoked is None:
-            _device_status_cache.pop(device_id, None)
+            keys = [
+                key for key in _device_status_cache
+                if key[1] == device_id and (owner_username is None or key[0] == owner_username)
+            ]
+            for key in keys:
+                _device_status_cache.pop(key, None)
         else:
-            _device_status_cache[device_id] = (
+            _device_status_cache[(owner_username or "", device_id)] = (
                 {"device_id": device_id, "revoked": int(revoked)},
                 time.monotonic(),
             )
 
 
-def touch_last_seen(device_id: str) -> None:
-    db_write("UPDATE devices SET last_seen=? WHERE device_id=?", (ts(), device_id))
+def touch_last_seen(device_id: str, owner_username: str) -> None:
+    db_write(
+        "UPDATE devices SET last_seen=? WHERE device_id=? AND owner_username=?",
+        (ts(), device_id, owner_username),
+    )
 
 
-def revoke_device(device_id: str) -> bool:
-    row = get_device(device_id)
+def revoke_device(device_id: str, owner_username: str) -> bool:
+    row = get_device(device_id, owner_username)
     if not row:
         return False
-    if not db_write("UPDATE devices SET revoked=1 WHERE device_id=?", (device_id,)):
+    if not db_write(
+        "UPDATE devices SET revoked=1 WHERE device_id=? AND owner_username=?",
+        (device_id, owner_username),
+    ):
         invalidate_device_status_cache(device_id)
         return False
-    invalidate_device_status_cache(device_id, revoked=True)
+    invalidate_device_status_cache(device_id, revoked=True, owner_username=owner_username)
     log.info("Revoked device_id=%s", device_id)
     try:
         from app.devices.gateway import disconnect_device

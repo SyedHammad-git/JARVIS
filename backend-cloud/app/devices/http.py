@@ -190,10 +190,11 @@ def devices_list():
 def devices_revoke(device_id):
     if request.method == "OPTIONS":
         return "", 204
-    device = get_device(device_id)
+    owner = g.current_user["username"]
+    device = get_device(device_id, owner)
     if not device or device.get("owner_username") != g.current_user["username"]:
         return jsonify({"ok": False, "error": "not_found"}), 404
-    if not revoke_device(device_id):
+    if not revoke_device(device_id, owner):
         return jsonify({"ok": False, "error": "not_found"}), 404
     return jsonify({"ok": True, "device_id": device_id, "revoked": True})
 
@@ -202,12 +203,17 @@ def devices_revoke(device_id):
 @api_errors
 def device_status():
     device_id = (request.args.get("device_id") or DEVICE_ID or "").strip()
-    device = get_device_status_cached(device_id)
+    owner = str(
+        getattr(g, "device_status", {}).get("owner_username")
+        if hasattr(g, "device_status")
+        else g.current_user["username"]
+    )
+    device = get_device_status_cached(device_id, owner)
     if hasattr(g, "device_status"):
         if g.device_status.get("device_id") != device_id:
             return jsonify({"ok": False, "error": "not_found"}), 404
     else:
-        full_device = get_device(device_id)
+        full_device = get_device(device_id, owner)
         if not device or not full_device or full_device.get("owner_username") != g.current_user["username"]:
             return jsonify({"ok": False, "error": "not_found"}), 404
     online = is_online(device_id)

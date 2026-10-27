@@ -5,16 +5,34 @@ FIXED: C5 safe_msg/safe_title always defined before any use
 import datetime, json, logging, threading
 from pathlib import Path
 
-from app.config import discord_cfg, REQUESTS_OK, _req
+from app.config import REQUESTS_OK, _req
 from app.db import db_read, db_write, ts
 
 log = logging.getLogger("jarvis.notifications")
+
+def get_discord_settings(owner_username: str) -> dict:
+    if not owner_username:
+        return {"webhook_url": "", "enabled": False}
+    rows = db_read(
+        "SELECT webhook_url,enabled FROM discord_settings WHERE owner_username=?",
+        (owner_username,),
+    )
+    if not rows:
+        return {"webhook_url": "", "enabled": False}
+    return {
+        "webhook_url": rows[0].get("webhook_url", ""),
+        "enabled": bool(rows[0].get("enabled", False)),
+    }
+
 
 def send_discord_alert(
     message: str, image_path: str = None, owner_username: str = ""
 ) -> bool:
     if not REQUESTS_OK: return False
-    url = discord_cfg.get("webhook_url", "").strip()
+    settings = get_discord_settings(owner_username)
+    if not settings.get("enabled"):
+        return False
+    url = settings.get("webhook_url", "").strip()
     if not url or not url.startswith("https://discord.com/api/webhooks/"): return False
     try:
         embed = {
@@ -50,19 +68,16 @@ def send_os_notification(
     *,
     owner_username: str | None = None,
 ) -> bool:
+    if not owner_username:
+        return False
     from app.devices.gateway import call_device, is_online
 
     client_timeout = max(1, min(int(timeout), 10))
-    if owner_username:
-        devices = db_read(
-            "SELECT device_id, owner_username FROM devices "
-            "WHERE revoked=0 AND owner_username=? ORDER BY created_at",
-            (owner_username,),
-        )
-    else:
-        devices = db_read(
-            "SELECT device_id, owner_username FROM devices WHERE revoked=0 ORDER BY created_at"
-        )
+    devices = db_read(
+        "SELECT device_id, owner_username FROM devices "
+        "WHERE revoked=0 AND owner_username=? ORDER BY created_at",
+        (owner_username,),
+    )
     for device in devices:
         device_id = device.get("device_id")
         owner = device.get("owner_username")

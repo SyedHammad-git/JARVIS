@@ -14,13 +14,13 @@ from app.config import (
     GROQ_KEY, GEMINI_KEY, OPENROUTER_KEY,
     ai_router_state, ai_router_lock,
     work_session, work_session_lock,
-    discord_cfg
 )
 import app.db as database
 from app.db import db_read, db_scalar, ts
 from app.ai.agent import run_agent
 from app.key_store import KeyStorageUnavailable, user_api_key_context
 from app.devices.gateway import first_online_device
+from app.notifications import get_discord_settings
 
 # ✅ FIX L5: import module-level objects once at module load, not inside _pulse() on every call
 import app.smarthome as _sh
@@ -73,7 +73,8 @@ def _database_health_snapshot(owner_username: str = "", now: float | None = None
 
 
 def _pulse(owner_username: str = "") -> dict:
-    sh_on      = sum(1 for d in _sh.smarthome_devices.values() if d.get("state"))
+    smart_home_devices = _sh.get_devices(owner_username)
+    sh_on      = sum(1 for d in smart_home_devices.values() if d.get("state"))
     mon_cnt    = db_scalar(
         "SELECT COUNT(*) FROM monitors WHERE owner_username=? AND active=1",
         (owner_username,),
@@ -86,14 +87,14 @@ def _pulse(owner_username: str = "") -> dict:
         nm_mode   = owner_state.get("mode", "normal")
     return {
         "smarthome_on":      sh_on,
-        "smarthome_total":   len(_sh.smarthome_devices),
+        "smarthome_total":   len(smart_home_devices),
         "monitor_active":    mon_cnt,
         "heartbeat_pending": hb_len,
         "heartbeat_enabled": heartbeat_config.get("enabled", True),
         "ai_active":         ai_router_state.get("active", "groq"),
         "neural_active":     nm_active,
         "neural_mode":       nm_mode,
-        "discord_enabled":   discord_cfg.get("enabled", False),
+        "discord_enabled":   get_discord_settings(owner_username).get("enabled", False),
         "work_session_mins": int((time.time() - work_session["start"]) / 60),
     }
 

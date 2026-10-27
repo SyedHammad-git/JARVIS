@@ -82,7 +82,7 @@ def call_device(
     confirmation_nonce: str | None = None,
 ) -> dict:
     """Send command to the paired device; wait for ack. Never raises to the agent."""
-    device = get_device(device_id)
+    device = get_device(device_id, owner_username)
     if not device:
         return {"ok": False, "error": "device_offline"}
     if not owner_username or device.get("owner_username") != owner_username:
@@ -159,7 +159,7 @@ class DeviceNamespace(Namespace):
             except Exception:
                 pass
             log.info("device replaced previous socket device_id=%s", device_id)
-        touch_last_seen(device_id)
+        touch_last_seen(device_id, str(row.get("owner_username") or ""))
         log.info("device connected device_id=%s", device_id)
         return True
 

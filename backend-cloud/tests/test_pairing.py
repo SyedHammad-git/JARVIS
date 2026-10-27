@@ -27,10 +27,10 @@ class PairingTests(unittest.TestCase):
 
     def test_revoke_marks_row(self):
         device_id, _token = issue_device("revoke-pc", "pairing-test-owner")
-        self.assertTrue(revoke_device(device_id))
+        self.assertTrue(revoke_device(device_id, "pairing-test-owner"))
         rows = db_read("SELECT revoked FROM devices WHERE device_id=?", (device_id,))
         self.assertEqual(int(rows[0]["revoked"]), 1)
-        self.assertFalse(revoke_device("dev_does_not_exist"))
+        self.assertFalse(revoke_device("dev_does_not_exist", "pairing-test-owner"))
 
 
 if __name__ == "__main__":

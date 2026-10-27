@@ -1,13 +1,12 @@
 """Server-side heartbeat, Discord, and weather routes."""
 from flask import Blueprint, g, jsonify, request
 
-from app.config import discord_cfg
-from app.db import cfg_set, db_read
+from app.db import db_read, db_write, ts
 from app.error_utils import api_errors
 from app.neural import (
     get_heartbeat_config, get_heartbeat_queue, update_heartbeat_config,
 )
-from app.notifications import send_discord_alert
+from app.notifications import get_discord_settings, send_discord_alert
 from app.tools.server_tools import tool_get_weather
 
 system = Blueprint("system", __name__)
@@ -85,16 +84,28 @@ def discord_config():
         return "", 204
     if request.method == "POST":
         body = request.get_json(silent=True) or {}
+        owner = g.current_user["username"]
+        settings = get_discord_settings(owner)
+        webhook_url = settings["webhook_url"]
+        enabled = settings["enabled"]
         if "webhook_url" in body:
-            discord_cfg["webhook_url"] = body["webhook_url"]
-            cfg_set("discord_webhook_url", body["webhook_url"])
+            value = body["webhook_url"]
+            if not isinstance(value, str) or (value and not value.startswith("https://discord.com/api/webhooks/")):
+                return jsonify({"ok": False, "error": "invalid_webhook_url"}), 400
+            webhook_url = value.strip()
         if "enabled" in body:
-            discord_cfg["enabled"] = bool(body["enabled"])
-            cfg_set("discord_enabled", "true" if body["enabled"] else "false")
-        return jsonify({"ok": True})
+            enabled = bool(body["enabled"])
+        saved = db_write(
+            "INSERT INTO discord_settings(owner_username,webhook_url,enabled,updated_at) "
+            "VALUES(?,?,?,?) ON CONFLICT(owner_username) DO UPDATE SET "
+            "webhook_url=excluded.webhook_url,enabled=excluded.enabled,updated_at=excluded.updated_at",
+            (owner, webhook_url, int(enabled), ts()),
+        )
+        return jsonify({"ok": bool(saved)})
+    settings = get_discord_settings(g.current_user["username"])
     return jsonify({
-        "webhook_configured": bool(discord_cfg.get("webhook_url", "")),
-        "enabled": discord_cfg.get("enabled"),
+        "webhook_configured": bool(settings["webhook_url"]),
+        "enabled": settings["enabled"],
     })
 
 
@@ -103,7 +114,10 @@ def discord_config():
 def discord_test():
     if request.method == "OPTIONS":
         return "", 204
-    return jsonify({"ok": send_discord_alert("JARVIS Discord test — connection successful!")})
+    return jsonify({"ok": send_discord_alert(
+        "JARVIS Discord test — connection successful!",
+        owner_username=g.current_user["username"],
+    )})
 
 
 @system.route("/api/discord/send", methods=["POST", "OPTIONS"])
@@ -114,7 +128,7 @@ def discord_send():
     message = ((request.get_json(silent=True) or {}).get("message") or "").strip()
     if not message:
         return jsonify({"error": "No message"}), 400
-    return jsonify({"ok": send_discord_alert(message)})
+    return jsonify({"ok": send_discord_alert(message, owner_username=g.current_user["username"] )})
 
 
 @system.route("/api/weather", methods=["GET"])

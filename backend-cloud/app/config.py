@@ -177,19 +177,6 @@ cache = {
     "alerts": [],
 }
 
-# ── Discord config ─────────────────────────────────────────────────
-_env_webhook = os.environ.get("DISCORD_WEBHOOK", "").strip()
-_db_webhook  = cfg_get("discord_webhook_url", "")
-if _env_webhook and not _db_webhook:
-    cfg_set("discord_webhook_url", _env_webhook)
-    cfg_set("discord_enabled", "true")
-    print("[CONFIG] [INFO] DISCORD_WEBHOOK loaded from environment")
-
-discord_cfg = {
-    "webhook_url": _db_webhook or _env_webhook,
-    "enabled": cfg_get("discord_enabled", "false") == "true"
-}
-
 # ── Work session ──────────────────────────────────────────────────
 # ✅ FIX M2: All mutations MUST acquire work_session_lock
 work_session = {

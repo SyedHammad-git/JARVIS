@@ -7,7 +7,7 @@ from flask import Blueprint, g, jsonify, request
 from app.db import db_read, db_write, ts
 from app.auth import add_alert
 from app.smarthome import (
-    smarthome_devices, toggle_device, save_devices
+    get_devices, add_device, remove_device, toggle_device,
 )
 from app.monitor import (
     monitor_engine_running, get_monitor_cache, invalidate_monitor_cache,
@@ -22,10 +22,12 @@ iot = Blueprint("iot", __name__)
 @iot.route("/api/smarthome/devices", methods=["GET"])
 @api_errors
 def smarthome_get_devices():
+    owner = g.current_user["username"]
+    devices = get_devices(owner)
     return jsonify({
-        "devices": smarthome_devices,
-        "count":   len(smarthome_devices),
-        "on":      sum(1 for d in smarthome_devices.values() if d.get("state")),
+        "devices": devices,
+        "count":   len(devices),
+        "on":      sum(1 for d in devices.values() if d.get("state")),
     })
 
 @iot.route("/api/smarthome/toggle/<device_id>", methods=["POST","OPTIONS"])
@@ -46,13 +48,15 @@ def smarthome_toggle(device_id):
 def smarthome_all():
     if request.method == "OPTIONS": return "", 204
     state = bool((request.get_json(silent=True) or {}).get("state", False))
-    for dev_id in smarthome_devices:
-        toggle_device(dev_id, force_state=state, owner_username=g.current_user["username"])
+    owner = g.current_user["username"]
+    devices = get_devices(owner)
+    for dev_id in devices:
+        toggle_device(dev_id, force_state=state, owner_username=owner)
     add_alert(
         f"SmartHome: All {'ON' if state else 'OFF'}",
         owner_username=g.current_user["username"],
     )
-    return jsonify({"ok": True, "state": state, "devices": smarthome_devices})
+    return jsonify({"ok": True, "state": state, "devices": get_devices(owner)})
 
 @iot.route("/api/smarthome/add", methods=["POST","OPTIONS"])
 @api_errors
@@ -62,22 +66,23 @@ def smarthome_add():
     name  = (body.get("name") or "").strip()
     dtype = (body.get("type") or "switch").strip()
     if not name: return jsonify({"error":"No name provided"}), 400
-    dev_id = f"{dtype}_{len(smarthome_devices)+1}"
-    smarthome_devices[dev_id] = {
+    owner = g.current_user["username"]
+    devices = get_devices(owner)
+    dev_id = f"{dtype}_{len(devices)+1}"
+    device = {
         "name": name, "state": False, "type": dtype,
         "icon": body.get("icon","🔌"), "room": body.get("room",""),
     }
-    save_devices()
-    return jsonify({"ok": True, "device_id": dev_id, "device": smarthome_devices[dev_id]})
+    add_device(owner, dev_id, device)
+    return jsonify({"ok": True, "device_id": dev_id, "device": device})
 
 @iot.route("/api/smarthome/remove/<device_id>", methods=["POST","OPTIONS"])
 @api_errors
 def smarthome_remove(device_id):
     if request.method == "OPTIONS": return "", 204
-    if device_id not in smarthome_devices:
+    removed = remove_device(g.current_user["username"], device_id)
+    if removed is None:
         return jsonify({"error":"Device not found"}), 404
-    removed = smarthome_devices.pop(device_id)
-    save_devices()
     return jsonify({"ok": True, "removed": removed})
 
 # ── Uptime Monitor ────────────────────────────────────────────────

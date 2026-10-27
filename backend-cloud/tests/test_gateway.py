@@ -96,7 +96,7 @@ class CallDeviceTests(unittest.TestCase):
         device_id, _token, owner = self._owned_device("revoked-pc")
         _bind(device_id, "sid_revoked")
         try:
-            self.assertTrue(revoke_device(device_id))
+            self.assertTrue(revoke_device(device_id, owner))
             with patch("app.devices.gateway.socketio.call") as mock_call:
                 self.assertEqual(
                     call_device(
@@ -134,7 +134,7 @@ class TokenValidateTests(unittest.TestCase):
         finally:
             if good_client.is_connected("/device"):
                 good_client.disconnect(namespace="/device")
-        revoke_device(device_id)
+        revoke_device(device_id, "clerk:wrong-token-owner")
         self.assertIsNone(validate_device_token(device_id, token))
         self.assertEqual(len(hash_token(token)), 64)
 
@@ -155,7 +155,7 @@ class LiveRevocationTests(unittest.TestCase):
         try:
             self.assertTrue(client.is_connected("/device"))
             started = time.monotonic()
-            self.assertTrue(revoke_device(device_id))
+            self.assertTrue(revoke_device(device_id, owner))
             self.assertFalse(client.is_connected("/device"))
             self.assertLess(time.monotonic() - started, 2.0)
             self.assertEqual(
