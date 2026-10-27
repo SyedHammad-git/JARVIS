@@ -77,6 +77,16 @@ def test_dry_run_reports_before_after_and_never_executes_ddl(monkeypatch):
     ]
 
 
+def test_schema_statement_split_ignores_semicolons_inside_sql_comments():
+    statements = migration._statements(
+        "-- schema note; explanatory fragment\n"
+        "CREATE TABLE IF NOT EXISTS sample_table (id INTEGER);\n"
+        "-- trailing comment; another fragment\n"
+    )
+
+    assert statements == ["CREATE TABLE IF NOT EXISTS sample_table (id INTEGER)"]
+
+
 def test_nonempty_targets_refuse_without_force(monkeypatch):
     connection = FakeConnection()
     patch_migration(monkeypatch, {"devices": 4})

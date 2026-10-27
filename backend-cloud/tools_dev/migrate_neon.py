@@ -27,7 +27,8 @@ from app import db as database
 
 
 def _statements(schema: str):
-    return [statement.strip() for statement in schema.split(";") if statement.strip()]
+    uncommented = re.sub(r"(?m)^\s*--[^\r\n]*", "", schema)
+    return [statement.strip() for statement in uncommented.split(";") if statement.strip()]
 
 
 def _schemas():
