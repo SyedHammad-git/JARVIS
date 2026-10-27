@@ -9,7 +9,7 @@
     "dev": "set JARVIS_DEV=1&& electron .",
     "test": "node --test test/client.test.js",
     "test:camera": "jest --runInBand test/jest/camera.spec.js",
-    "dist": "electron-builder --win nsis && powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/checksum.ps1"
+    "dist": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1"
   },
   "dependencies": {
     "socket.io-client": "4.8.4"

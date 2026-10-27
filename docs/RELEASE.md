@@ -10,7 +10,7 @@
    npm run dist
    Pop-Location
    ```
-3. Set `BACKEND_URL` to the production backend's HTTPS origin in the build environment. The packaged client locks its pairing form to this URL; production does not accept HTTP.
+3. Set `BACKEND_URL` to the production backend's HTTPS origin in the build environment. `scripts/build.ps1` validates and embeds the origin in a temporary ignored config file, then removes only the file it created; the packaged client locks its pairing form to this URL and production does not accept HTTP.
 4. Confirm the installer and matching checksum file exist under `client-electron/release/`:
    - `JARVIS-Device-Client-Setup-<version>.exe`
    - `JARVIS-Device-Client-Setup-<version>.exe.sha256`

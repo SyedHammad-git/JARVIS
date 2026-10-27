@@ -2,3 +2,4 @@
 /dist/
 /release/
 *.exe
+src/backend-config.json

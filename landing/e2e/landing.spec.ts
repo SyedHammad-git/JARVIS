@@ -43,7 +43,8 @@ test("Try JARVIS opens Clerk sign-in", async ({ page }) => {
 
 test("download page reports unavailable until a release is configured", async ({ page }) => {
   await page.goto("/download");
-  await expect(page.getByRole("link", { name: "Download unavailable" })).toHaveAttribute("href", "/docs/connect");
+  await expect(page.getByRole("button", { name: "Coming soon" })).toBeDisabled();
+  await expect(page.getByRole("link", { name: "Download installer" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Install and pair" })).toBeVisible();
   await expect(page.locator("ol li")).toHaveCount(4);
 });

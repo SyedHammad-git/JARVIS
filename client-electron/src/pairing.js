@@ -1,5 +1,12 @@
 'use strict';
 
+let packagedBackendUrl = '';
+try {
+  packagedBackendUrl = require('./backend-config.json').backendUrl || '';
+} catch {
+  // Development runs can configure BACKEND_URL directly.
+}
+
 function validateBackendUrl(value, devMode = process.env.JARVIS_DEV === '1') {
   let url;
   try {
@@ -15,7 +22,7 @@ function validateBackendUrl(value, devMode = process.env.JARVIS_DEV === '1') {
   return url.toString().replace(/\/$/, '');
 }
 
-function configuredBackendUrl(value = process.env.BACKEND_URL, devMode = process.env.JARVIS_DEV === '1') {
+function configuredBackendUrl(value = packagedBackendUrl || process.env.BACKEND_URL, devMode = process.env.JARVIS_DEV === '1') {
   if (typeof value !== 'string' || !value.trim()) return '';
   return validateBackendUrl(value, devMode);
 }
