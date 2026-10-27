@@ -170,6 +170,51 @@ class AgentLoopTests(unittest.TestCase):
         self.assertTrue(data.get("needs_confirmation"))
         self.assertEqual(data.get("error"), "needs_confirmation")
 
+    def test_device_action_shares_web_search_batch_requires_confirmation(self):
+        response = {
+            "ok": True,
+            "text": "",
+            "model": "fake",
+            "error": "",
+            "tool_calls": [
+                {"id": "open", "name": "open_app", "args": {"target": "notepad"}},
+                {"id": "search", "name": "web_search", "args": {"query": "instructions"}},
+            ],
+            "raw_assistant_message": {"role": "assistant", "content": ""},
+        }
+        with patch("app.ai.agent.chat", return_value=response), \
+             patch("app.ai.agent.save_message", return_value=True), \
+             patch("app.ai.agent.load_recent_messages", return_value=[]), \
+             patch("app.devices.gateway.call_device") as call_device:
+            out = run_agent(
+                "search and open notepad",
+                ctx={
+                    "device_id": "dev_online",
+                    "owner_username": "clerk:test-owner",
+                    "device_online": True,
+                    "confirmed": False,
+                },
+            )
+
+        self.assertTrue(out["needs_confirmation"])
+        self.assertEqual(out["reason"], "untrusted_web_content")
+        call_device.assert_not_called()
+
+    def test_duplicate_action_cache_is_partitioned_by_owner(self):
+        with patch("app.devices.gateway.call_device", return_value={"ok": True}) as call_device:
+            first = execute_tool(
+                "open_app", {"target": "notepad"},
+                {"device_id": "dev_a", "owner_username": "owner-a"},
+            )
+            second = execute_tool(
+                "open_app", {"target": "notepad"},
+                {"device_id": "dev_b", "owner_username": "owner-b"},
+            )
+
+        self.assertIn('"ok": true', first)
+        self.assertIn('"ok": true', second)
+        self.assertEqual(call_device.call_count, 2)
+
     def test_truncate_strips_base64_and_caps_length(self):
         blob = "data:image/png;base64," + ("A" * 400)
         out = truncate_tool_result({"shot": blob})

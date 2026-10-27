@@ -55,11 +55,12 @@ def execute_tool(name: str, args: dict, ctx: dict | None = None) -> str:
         return json.dumps({"ok": False, "error": "unknown_action", "tool": name})
 
     sig = _tool_signature(name, args or {})
+    cache_key = (str(ctx.get("owner_username") or ""), sig)
     now = time.time()
     with _last_action_lock:
         for k in [k for k, t in _last_action_registry.items() if now - t > _DEDUP_WINDOW_SECS]:
             del _last_action_registry[k]
-        last = _last_action_registry.get(sig)
+        last = _last_action_registry.get(cache_key)
         if last is not None and now - last < _DEDUP_WINDOW_SECS:
             log.info("De-duped repeat call: %s", sig[:120])
             return "This action was just performed, Sir — no need to repeat it."
@@ -127,7 +128,7 @@ def execute_tool(name: str, args: dict, ctx: dict | None = None) -> str:
     try:
         result = fn(args or {}, ctx) if name == "search_memory" else fn(args or {})
         with _last_action_lock:
-            _last_action_registry[sig] = time.time()
+            _last_action_registry[cache_key] = time.time()
         return truncate_tool_result(result)
     except Exception as e:
         log.warning("Tool error (%s): %s", name, e)
@@ -199,6 +200,8 @@ def _run_agent_inner(user_input: str, session_id: str, max_steps: int, ctx: dict
 
             tool_calls = result.get("tool_calls") or []
             if tool_calls:
+                if any((call.get("name") or "") == "web_search" for call in tool_calls):
+                    ctx["ingested_web_content"] = True
                 for tc in tool_calls:
                     fn_name = tc.get("name") or ""
                     fn_args = tc.get("args") if isinstance(tc.get("args"), dict) else {}
