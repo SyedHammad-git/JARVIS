@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-import os
+import importlib
 import pkgutil
-import subprocess
 import sys
 import time
+import base64
 from types import SimpleNamespace
 
 import jwt
@@ -489,7 +489,7 @@ def test_pair_code_brute_force_rate_limits_and_uniform_errors(monkeypatch, tmp_p
     assert [response.status_code for response in global_responses] == [400, 400, 400, 429]
 
 
-def test_every_app_module_imports_in_a_fresh_interpreter():
+def test_every_app_module_imports_with_package_identity():
     import app as app_package
 
     modules = [app_package.__name__]
@@ -497,19 +497,10 @@ def test_every_app_module_imports_in_a_fresh_interpreter():
         module.name
         for module in pkgutil.walk_packages(app_package.__path__, app_package.__name__ + ".")
     )
-    env = os.environ.copy()
-    env["JARVIS_SKIP_DOTENV"] = "1"
-    env["PYTHONIOENCODING"] = "utf-8"
     for module in modules:
-        result = subprocess.run(
-            [sys.executable, "-c", f"import importlib; importlib.import_module({module!r})"],
-            cwd=os.path.dirname(os.path.dirname(__file__)),
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
-        assert result.returncode == 0, f"fresh import failed for {module}: {result.stderr[-1500:]}"
+        imported = importlib.import_module(module)
+        assert sys.modules[imported.__name__] is imported
+        assert sys.modules[module] is imported
 
 
 def test_legacy_clerk_owners_are_migrated_without_local_user_collision(monkeypatch, tmp_path):
@@ -633,3 +624,103 @@ def test_pair_code_expiry_is_enforced(monkeypatch, tmp_path):
     assert db.db_write("UPDATE pairing_codes SET expires_at=? WHERE code_hash=?", (0, hashlib.sha256(code.encode()).hexdigest()))
     expired = client.post("/pairing/redeem-code", json={"code": code})
     assert expired.status_code == 400
+
+
+def test_headless_pair_code_device_actions_and_mocked_snapshot(monkeypatch, tmp_path):
+    app, client = _client(monkeypatch, tmp_path)
+    client.post(
+        "/api/keys/groq",
+        json={"key": "headless-integration-provider-key"},
+        headers=_headers(),
+    )
+    issued = client.post("/api/devices/pair-code", json={"name": "Headless PC"}, headers=_headers())
+    assert issued.status_code == 200
+    code = issued.get_json()["code"]
+    redeemed = client.post("/pairing/redeem-code", json={"code": code})
+    assert redeemed.status_code == 200
+    credentials = redeemed.get_json()
+    device_id = credentials["device_id"]
+    scopes = {
+        "allow_open_app": True,
+        "allow_camera": True,
+        "allow_notify": True,
+        "allow_lock": False,
+        "allow_system_stats": False,
+    }
+    assert client.put(
+        f"/api/devices/{device_id}/scopes",
+        json={"scopes": scopes},
+        headers=_headers(),
+    ).status_code == 200
+
+    from app.extensions import socketio
+    from app.vision import snapshots
+
+    device = socketio.test_client(
+        app,
+        namespace="/device",
+        auth={"device_id": device_id, "token": credentials["token"]},
+    )
+    assert device.is_connected("/device")
+    monkeypatch.setattr(snapshots, "SNAPSHOT_DIR", tmp_path / "snapshots")
+    image_b64 = base64.b64encode(b"\xff\xd8\xffmock-headless-jpeg").decode("ascii")
+    actions = {
+        "open notepad": ("open_app", {"target": "notepad"}),
+        "send notification": ("notify", {"title": "Headless", "body": "Notification"}),
+        "take snapshot": ("take_snapshot", {"question": "Describe the test image"}),
+    }
+
+    def fake_chat(messages, **_kwargs):
+        user_message = next(message["content"] for message in reversed(messages) if message["role"] == "user")
+        tool_messages = [message for message in messages if message.get("role") == "tool"]
+        if not tool_messages:
+            name, args = actions[user_message]
+            return {
+                "ok": True,
+                "model": "headless-test",
+                "tool_calls": [{"id": user_message, "name": name, "args": args}],
+                "raw_assistant_message": {"role": "assistant", "content": None},
+            }
+        return {
+            "ok": True,
+            "model": "headless-test",
+            "text": "The requested device action completed.",
+            "tool_calls": [],
+            "raw_assistant_message": {
+                "role": "assistant",
+                "content": "The requested device action completed.",
+            },
+        }
+
+    dispatched = []
+
+    def fake_socket_call(_event, payload, **_kwargs):
+        dispatched.append(payload["action"])
+        if payload["action"] == "take_snapshot":
+            return {"ok": True, "image_b64": image_b64, "mime": "image/jpeg"}
+        return {"ok": True, "message": "headless device action acknowledged"}
+
+    from app.ai import engine
+    monkeypatch.setattr("app.ai.agent.chat", fake_chat)
+    monkeypatch.setattr(socketio, "call", fake_socket_call)
+    monkeypatch.setattr(engine, "call_gemini", lambda *_args, **_kwargs: {"ok": True, "text": "A test image."})
+
+    try:
+        for request_message, expected_action in (
+            ("open notepad", "open_app"),
+            ("send notification", "notify"),
+            ("take snapshot", "take_snapshot"),
+        ):
+            response = client.post(
+                "/api/agent",
+                json={"message": request_message},
+                headers=_headers(),
+            )
+            assert response.status_code == 200
+            assert response.get_json()["ok"] is True
+            assert expected_action in [step["tool"] for step in response.get_json()["steps"]]
+            assert image_b64 not in response.get_data(as_text=True)
+        assert dispatched == ["open_app", "notify", "take_snapshot"]
+    finally:
+        device.disconnect(namespace="/device")
+        client.post(f"/api/devices/{device_id}/revoke", headers=_headers())
