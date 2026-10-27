@@ -2,9 +2,13 @@
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+import dotenv
 
 import app.db as database
 import tools_dev.migrate_neon as migration
+import scripts.assign_legacy_owner as assign_legacy_owner
+import scripts.backfill_vectors as backfill_vectors
+import scripts.check_neon_connection as connection_probe
 
 
 class FakeCursor:
@@ -149,3 +153,45 @@ def test_neon_migration_adds_owner_column_to_every_scoped_table():
         assert f"ALTER TABLE IF EXISTS {table} " in migration_schema
         assert f"UPDATE {table} SET owner_username='' WHERE owner_username IS NULL;" in migration_schema
         assert f"ALTER TABLE IF EXISTS {table} ALTER COLUMN owner_username SET NOT NULL;" in migration_schema
+
+
+def test_operator_scripts_load_explicit_backend_env_path_unless_disabled(monkeypatch):
+    calls = []
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda path, override: calls.append((path, override)))
+    monkeypatch.delenv("JARVIS_SKIP_DOTENV", raising=False)
+    loaders = (
+        (migration.load_backend_environment, migration.BACKEND_DIR),
+        (assign_legacy_owner.load_backend_environment, assign_legacy_owner.BACKEND_DIR),
+        (backfill_vectors.load_backend_environment, backfill_vectors.BACKEND_DIR),
+    )
+
+    for load_environment, backend_dir in loaders:
+        load_environment()
+
+    assert calls == [(backend_dir / ".env", False) for _, backend_dir in loaders]
+    calls.clear()
+    monkeypatch.setenv("JARVIS_SKIP_DOTENV", "1")
+    for load_environment, _backend_dir in loaders:
+        load_environment()
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("channel_binding=require is not supported", "channel_binding"),
+        ("password authentication failed", "auth"),
+        ("connection timed out", "network"),
+    ],
+)
+def test_connection_probe_classifies_without_returning_error_text(message, expected):
+    assert connection_probe.classify_connection_error(RuntimeError(message)) == expected
+
+
+def test_connection_probe_reports_empty_without_connecting(monkeypatch, capsys):
+    monkeypatch.setenv("JARVIS_SKIP_DOTENV", "1")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    assert connection_probe.main() == 2
+    output = capsys.readouterr().out
+    assert output.strip() == "DATABASE_URL=EMPTY"
